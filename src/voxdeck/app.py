@@ -10,7 +10,7 @@ from PySide6.QtCore import QElapsedTimer, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow,
-                               QMenu, QPushButton, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QMenu, QMessageBox, QPushButton, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from . import audio
 from .board import COLORS
@@ -29,7 +29,8 @@ QComboBox, QPushButton { background: #232731; color: #e6e8ec; border: 1px solid 
     border-radius: 6px; padding: 6px 10px; }
 QPushButton:hover { border-color: #5865f2; }
 QPushButton:disabled { color: #5b6070; background: #1a1d24; }
-QPushButton#preset:checked { background: #5865f2; border-color: #7983f5; color: white; font-weight: bold; }
+QPushButton#preset:checked, QPushButton#upreset:checked { background: #5865f2; border-color: #7983f5; color: white; font-weight: bold; }
+QPushButton#upreset { border-color: #3d5a80; color: #cfe0ff; }
 QPushButton#power:checked { background: #1f7a45; border-color: #2ea35f; color: white; font-weight: bold; }
 QPushButton#mute:checked { background: #8a2a2a; border-color: #b33a3a; color: white; }
 QPushButton#pad { border: none; border-radius: 10px; font-size: 14px; font-weight: bold; color: white; }
@@ -249,23 +250,17 @@ class Window(QMainWindow):
         self.pgrid.setSpacing(6)
         v.addLayout(self.pgrid)
         self.pbtn = {}
-        for i, (pid, p) in enumerate(ctl.presets.items()):
-            b = QPushButton(p["name"])
-            b.setObjectName("preset")
-            b.setCheckable(True)
-            tip = p.get("description", "")
-            if not p["available"]:
-                b.setEnabled(False)
-                tip += "\nNeeds: " + ", ".join(p["missing"])
-            b.setToolTip(tip)
-            b.clicked.connect(lambda _=False, pid=pid: ctl.set_preset(pid))
-            self.pgrid.addWidget(b, i // 5, i % 5)
-            self.pbtn[pid] = b
+        self.rebuild_presets()
+        ctl.presets_changed.connect(self.rebuild_presets)
 
         trow = QHBoxLayout()
         self.tune_head = header("Tune")
         trow.addWidget(self.tune_head)
         trow.addStretch()
+        self.tune_save = QPushButton("Save as preset...")
+        self.tune_save.setToolTip("Keep these settings as a new preset of your own")
+        self.tune_save.clicked.connect(self.save_preset)
+        trow.addWidget(self.tune_save)
         self.tune_reset = QPushButton("Reset")
         self.tune_reset.setToolTip("Back to the preset's own values")
         self.tune_reset.clicked.connect(lambda: ctl.reset_params(self.tune_pid))
@@ -371,6 +366,70 @@ class Window(QMainWindow):
         self.status.setText(("Virtual mic: Voice Mix" if ok else "Audio engine not running") +
                             (f"   playing {st['playing']}" if st["playing"] else ""))
 
+    def rebuild_presets(self):
+        while self.pgrid.count():
+            self.pgrid.takeAt(0).widget().deleteLater()
+        self.pbtn = {}
+        for i, (pid, p) in enumerate(self.ctl.presets.items()):
+            b = QPushButton(p["name"])
+            b.setObjectName("upreset" if p["user"] else "preset")
+            b.setCheckable(True)
+            tip = p.get("description", "")
+            if p["user"]:
+                tip += "\nYour preset. Right-click to rename, export or delete."
+            if not p["available"]:
+                b.setEnabled(False)
+                tip += "\nNeeds: " + ", ".join(p["missing"])
+            b.setToolTip(tip.strip())
+            b.clicked.connect(lambda _=False, pid=pid: self.ctl.set_preset(pid))
+            b.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            b.customContextMenuRequested.connect(lambda pos, pid=pid, b=b: self.preset_menu(pid, b, pos))
+            self.pgrid.addWidget(b, i // 5, i % 5)
+            self.pbtn[pid] = b
+        self.tune_sig = None
+        if hasattr(self, "tgrid"):
+            self.refresh()
+
+    def preset_menu(self, pid, button, pos):
+        p = self.ctl.presets.get(pid)
+        if not p:
+            return
+        m = QMenu(self)
+        if p["user"]:
+            a_ren, a_del = m.addAction("Rename..."), m.addAction("Delete...")
+        else:
+            a_ren = a_del = None
+            m.addAction("Built-in presets are read-only").setEnabled(False)
+        self.preset_menu_extra(m, pid)
+        act = m.exec(button.mapToGlobal(pos))
+        try:
+            if act is not None and act == a_ren:
+                t, ok = QInputDialog.getText(self, "Rename preset", "Name", text=p["name"])
+                if ok and t.strip():
+                    self.ctl.rename_preset(pid, t)
+            elif act is not None and act == a_del:
+                if QMessageBox.question(self, "Delete preset", f"Delete your preset \"{p['name']}\"?") \
+                        == QMessageBox.StandardButton.Yes:
+                    self.ctl.delete_preset(pid)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Vox Deck", str(e))
+
+    def preset_menu_extra(self, menu, pid):
+        """Hook for more preset actions (export)."""
+
+    def save_preset(self):
+        pid = self.ctl.s["preset"]
+        p = self.ctl.presets[pid]
+        suggestion = p["name"] if p["user"] else f"My {p['name']}"
+        t, ok = QInputDialog.getText(self, "Save as preset",
+                                     f"Name for a new preset with the current {p['name']} settings",
+                                     text=suggestion)
+        if ok and t.strip():
+            try:
+                self.ctl.save_preset(t)
+            except (ValueError, OSError) as e:
+                QMessageBox.warning(self, "Vox Deck", str(e))
+
     def refresh_tune(self):
         pid = self.ctl.s["preset"]
         params = self.ctl.params(pid)
@@ -452,9 +511,14 @@ def main(argv=None):
     act.triggered.connect(lambda: ctl.set_enabled(act.isChecked()))
     menu.addAction(act)
     sub = menu.addMenu("Preset")
-    for pid, p in ctl.presets.items():
-        if p["available"]:
-            sub.addAction(p["name"], lambda pid=pid: ctl.set_preset(pid))
+
+    def fill_presets():
+        sub.clear()
+        for pid, p in ctl.presets.items():
+            if p["available"]:
+                sub.addAction(p["name"], lambda pid=pid: ctl.set_preset(pid))
+    fill_presets()
+    ctl.presets_changed.connect(fill_presets)
     menu.addAction("Stop all clips", ctl.stop_all)
     menu.addSeparator()
     menu.addAction("Quit", app.quit)

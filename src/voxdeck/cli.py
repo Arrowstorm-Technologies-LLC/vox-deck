@@ -31,6 +31,14 @@ def main(argv=None):
     p.add_argument("value", nargs="?", type=float)
     p.add_argument("--preset", help="preset id (default: current)")
     p.add_argument("--reset", action="store_true", help="restore the preset's own values")
+    p = sub.add_parser("save", help="save the current preset with its tuning as a new preset")
+    p.add_argument("name")
+    p.add_argument("--preset", help="save this preset instead of the current one")
+    p = sub.add_parser("rename", help="rename one of your presets")
+    p.add_argument("preset")
+    p.add_argument("name")
+    p = sub.add_parser("delete", help="delete one of your presets (built-ins are read-only)")
+    p.add_argument("preset")
     sub.add_parser("levels", help="print mic and Voice Mix peak levels (dBFS)")
     p = sub.add_parser("subscribe", help="stream status changes as JSON lines")
     p.add_argument("--levels", action="store_true", help="also stream level meter events")
@@ -49,6 +57,12 @@ def main(argv=None):
             msg["on"] = a.state == "on"
         elif a.cmd == "mic":
             msg["source"] = a.source
+        elif a.cmd == "save":
+            msg = {"cmd": "save-preset", "name": a.name, "preset": a.preset}
+        elif a.cmd == "rename":
+            msg = {"cmd": "rename-preset", "preset": a.preset, "name": a.name}
+        elif a.cmd == "delete":
+            msg = {"cmd": "delete-preset", "preset": a.preset}
         elif a.cmd == "params" and a.preset:
             msg["preset"] = a.preset
         elif a.cmd == "param":
@@ -64,7 +78,7 @@ def main(argv=None):
     except (OSError, KeyboardInterrupt) as e:
         print(f"vox-deck: app not running ({e})", file=sys.stderr)
         return 2
-    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "param") else 1))
+    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "param", "save", "rename", "delete") else 1))
     return 0 if r.get("ok", True) else 1
 
 

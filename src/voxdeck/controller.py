@@ -17,6 +17,7 @@ DEFAULTS = {"mic": "", "preset": "clean", "enabled": True, "muted": False,
 
 class Controller(QObject):
     changed = Signal()
+    presets_changed = Signal()
 
     def __init__(self):
         super().__init__()
@@ -104,6 +105,47 @@ class Controller(QObject):
         self.s["tuning"].setdefault(pid, {})[tid] = v
         self.apply_voice(save=False)
         return v
+
+    # -- user presets
+    def reload_presets(self):
+        self.presets = effects.load_presets()
+        if self.s["preset"] not in self.presets:
+            self.s["preset"] = "clean"
+        for pid in list(self.s["tuning"]):
+            if pid not in self.presets:
+                del self.s["tuning"][pid]
+        self.presets_changed.emit()
+
+    def save_preset(self, name: str, pid=None) -> str:
+        """Save preset `pid` (default: current) with its live tuning as a new user preset and
+        select it. Same plugins, so the switch is live. Returns the new id."""
+        pid = pid or self.s["preset"]
+        rec = effects.save_user_preset(self.effective(pid), name, set(self.presets))
+        self.s["tuning"].pop(pid, None)          # the values now live in the new preset
+        self.reload_presets()
+        if pid == self.s["preset"]:
+            self.s["preset"] = rec["id"]
+        self.apply_voice()
+        return rec["id"]
+
+    def rename_preset(self, pid: str, name: str):
+        if pid not in self.presets:
+            raise ValueError(f"unknown preset {pid!r}")
+        effects.rename_user_preset(self.presets[pid], name)
+        self.reload_presets()
+        self._emit()
+
+    def delete_preset(self, pid: str):
+        if pid not in self.presets:
+            raise ValueError(f"unknown preset {pid!r}")
+        p = self.presets[pid]
+        effects.delete_user_preset(p)
+        if self.s["preset"] == pid:
+            base = p.get("base")
+            self.s["preset"] = base if base in self.presets and base != pid else "clean"
+        self.s["tuning"].pop(pid, None)
+        self.reload_presets()
+        self.apply_voice()
 
     def reset_params(self, pid=None):
         self.s["tuning"].pop(pid or self.s["preset"], None)
@@ -267,7 +309,15 @@ class Controller(QObject):
         elif cmd == "presets":
             return {"ok": True, "presets": [
                 {"id": k, "name": p["name"], "available": p["available"], "missing": p["missing"],
-                 "description": p.get("description", "")} for k, p in self.presets.items()]}
+                 "description": p.get("description", ""), "user": p["user"]}
+                for k, p in self.presets.items()]}
+        elif cmd == "save-preset":
+            pid = self.save_preset(m.get("name", ""), m.get("preset"))
+            return {"ok": True, "cmd": cmd, "id": pid}
+        elif cmd == "rename-preset":
+            self.rename_preset(str(m.get("preset", "")), m.get("name", ""))
+        elif cmd == "delete-preset":
+            self.delete_preset(str(m.get("preset", "")))
         elif cmd == "params":
             pid = m.get("preset") or self.s["preset"]
             if pid not in self.presets:

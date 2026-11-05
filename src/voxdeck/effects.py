@@ -290,6 +290,84 @@ def validate_preset(p) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- user presets
+def slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-")
+    return s or "preset"
+
+
+def unique_id(name: str, taken) -> str:
+    base = slug(name)
+    pid, n = base, 2
+    while pid in taken or pid in BUILTIN_IDS:
+        pid, n = f"{base}-{n}", n + 1
+    return pid
+
+
+def clean_name(name) -> str:
+    name = " ".join(str(name or "").split())
+    if not name or len(name) > 40:
+        raise ValueError("name must be 1 to 40 characters")
+    return name
+
+
+def _write_json(path: Path, data):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1))
+    tmp.replace(path)
+
+
+def preset_record(preset: dict) -> dict:
+    """The storable part of a loaded preset (runtime keys dropped, validated)."""
+    return validate_preset({k: v for k, v in preset.items()
+                            if k not in ("user", "file", "missing", "available")})
+
+
+def save_user_preset(preset: dict, name: str, taken) -> dict:
+    """Store `preset` (already tuned) as a new user preset called `name`. Returns the record."""
+    name = clean_name(name)
+    rec = preset_record(preset)
+    base = preset.get("base") or preset["id"]
+    rec.update(id=unique_id(name, taken), name=name, base=base,
+               description=f"Saved from {preset['name']}"[:300])
+    rec.pop("extra", None)
+    rec = validate_preset(rec)
+    _write_json(user_preset_dir() / f"{rec['id']}.json", rec)
+    return rec
+
+
+def _user_file(preset: dict) -> Path:
+    if not preset.get("user") or not preset.get("file"):
+        raise ValueError("built-in presets are read-only")
+    return Path(preset["file"])
+
+
+def _edit_user_file(preset: dict, fn):
+    """Apply fn(record) -> record|None to `preset` inside its file (single object or a list)."""
+    path = _user_file(preset)
+    data = json.loads(path.read_text())
+    items = data if isinstance(data, list) else [data]
+    out = []
+    for p in items:
+        if isinstance(p, dict) and p.get("id") == preset["id"]:
+            p = fn(p)
+        if p is not None:
+            out.append(p)
+    if not out:
+        path.unlink()
+    else:
+        _write_json(path, out if isinstance(data, list) else out[0])
+
+
+def rename_user_preset(preset: dict, name: str):
+    name = clean_name(name)
+    _edit_user_file(preset, lambda p: dict(p, name=name))
+
+
+def delete_user_preset(preset: dict):
+    _edit_user_file(preset, lambda p: None)
+
+
 # ---------------------------------------------------------------- tuning
 GAIN_TUNE = {"id": "gain", "name": "Output gain", "node": "out", "min": -24.0, "max": 12.0,
              "step": 0.5, "unit": "dB", "scale": "db"}
