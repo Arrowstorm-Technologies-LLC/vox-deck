@@ -1,5 +1,6 @@
 """Vox Deck main window, tray icon and entry point."""
 import argparse
+import math
 import os
 import signal
 import sys
@@ -20,6 +21,10 @@ QMainWindow, QWidget#root { background: #15171c; }
 QLabel { color: #d7dae0; }
 QLabel#h { color: #8a90a0; font-size: 11px; letter-spacing: 2px; }
 QLabel#title { font-size: 20px; font-weight: bold; color: #f2f3f5; }
+QLabel#val { color: #aab0c0; }
+QSlider::groove:horizontal { height: 4px; background: #2f3442; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #5865f2; border-radius: 2px; }
+QSlider::handle:horizontal { background: #e6e8ec; width: 12px; margin: -5px 0; border-radius: 6px; }
 QComboBox, QPushButton { background: #232731; color: #e6e8ec; border: 1px solid #2f3442;
     border-radius: 6px; padding: 6px 10px; }
 QPushButton:hover { border-color: #5865f2; }
@@ -104,6 +109,51 @@ class LevelMeter(QWidget):
         txt = "--" if self.db is None else ("-inf" if self.db <= self.LO else f"{self.db:.0f} dB")
         p.drawText(bx + bw + 6, 0, 52, self.height(), Qt.AlignmentFlag.AlignVCenter, txt)
         p.end()
+
+
+def fmt_value(spec, v):
+    step = float(spec.get("step") or 0.01)
+    dec = 0 if step >= 1 else min(3, max(0, -math.floor(math.log10(step) + 1e-9)))
+    unit = spec.get("unit", "")
+    sep = "" if unit in ("x", "%", ":1") else " "
+    return f"{v:.{dec}f}{sep}{unit}" if unit else f"{v:.{dec}f}"
+
+
+class TuneSlider(QWidget):
+    """One tunable control: label, slider (in steps), value text."""
+
+    def __init__(self, win, spec):
+        super().__init__()
+        self.win, self.spec = win, spec
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        self.name = QLabel(spec["name"])
+        self.name.setFixedWidth(118)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.n = max(1, round((spec["max"] - spec["min"]) / spec["step"]))
+        self.slider.setRange(0, self.n)
+        self.val = QLabel()
+        self.val.setObjectName("val")
+        self.val.setFixedWidth(64)
+        self.val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        h.addWidget(self.name)
+        h.addWidget(self.slider, 1)
+        h.addWidget(self.val)
+        self.set_value(spec["value"])
+        self.slider.valueChanged.connect(self.moved)
+
+    def to_value(self, i):
+        return self.spec["min"] + (self.spec["max"] - self.spec["min"]) * i / self.n
+
+    def set_value(self, v):
+        self.slider.blockSignals(True)
+        self.slider.setValue(round((v - self.spec["min"]) / (self.spec["max"] - self.spec["min"]) * self.n))
+        self.slider.blockSignals(False)
+        self.val.setText(fmt_value(self.spec, v))
+
+    def moved(self, i):
+        v = self.win.ctl.set_param(self.spec["id"], self.to_value(i), self.win.tune_pid)
+        self.val.setText(fmt_value(self.spec, v))
 
 
 class Pad(QPushButton):
@@ -212,6 +262,21 @@ class Window(QMainWindow):
             self.pgrid.addWidget(b, i // 5, i % 5)
             self.pbtn[pid] = b
 
+        trow = QHBoxLayout()
+        self.tune_head = header("Tune")
+        trow.addWidget(self.tune_head)
+        trow.addStretch()
+        self.tune_reset = QPushButton("Reset")
+        self.tune_reset.setToolTip("Back to the preset's own values")
+        self.tune_reset.clicked.connect(lambda: ctl.reset_params(self.tune_pid))
+        trow.addWidget(self.tune_reset)
+        v.addLayout(trow)
+        self.tgrid = QGridLayout()
+        self.tgrid.setHorizontalSpacing(28)
+        self.tgrid.setVerticalSpacing(6)
+        v.addLayout(self.tgrid)
+        self.tune_pid, self.tune_sig, self.tsliders = None, None, {}
+
         line = QFrame()
         line.setObjectName("line")
         line.setFrameShape(QFrame.Shape.HLine)
@@ -243,7 +308,7 @@ class Window(QMainWindow):
         self.rebuild_board()
         ctl.changed.connect(self.refresh)
         self.refresh()
-        self.resize(780, 560)
+        self.resize(800, 680)
 
     def fill_mics(self):
         self.mic.blockSignals(True)
@@ -301,9 +366,32 @@ class Window(QMainWindow):
         self.monitor.blockSignals(True)
         self.monitor.setChecked(st["monitor"])
         self.monitor.blockSignals(False)
+        self.refresh_tune()
         ok = st["engine"]["mix"] and (st["muted"] or st["engine"]["voice"])
         self.status.setText(("Virtual mic: Voice Mix" if ok else "Audio engine not running") +
                             (f"   playing {st['playing']}" if st["playing"] else ""))
+
+    def refresh_tune(self):
+        pid = self.ctl.s["preset"]
+        params = self.ctl.params(pid)
+        sig = (pid, tuple(t["id"] for t in params))
+        if sig != self.tune_sig:
+            while self.tgrid.count():
+                self.tgrid.takeAt(0).widget().deleteLater()
+            self.tune_pid, self.tune_sig, self.tsliders = pid, sig, {}
+            for i, t in enumerate(params):
+                w = TuneSlider(self, t)
+                self.tsliders[t["id"]] = w
+                self.tgrid.addWidget(w, i // 2, i % 2)
+        else:
+            for t in params:
+                w = self.tsliders[t["id"]]
+                if not w.slider.isSliderDown():
+                    w.set_value(t["value"])
+        name = self.ctl.presets[pid]["name"]
+        off = "" if self.ctl.s["enabled"] else "  (effects off: applies when on)"
+        self.tune_head.setText(f"TUNE  {name.upper()}{off}")
+        self.tune_reset.setEnabled(bool(self.ctl.s["tuning"].get(pid)))
 
     def poll_meters(self):
         lv, now = self.ctl.levels(), self.clock.elapsed()

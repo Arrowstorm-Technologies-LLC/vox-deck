@@ -93,7 +93,7 @@ def voice_conf(preset: dict, mic: str) -> str:
         filter.graph = {graph}
         capture.props = {{
           node.name = "vox_voice_in"
-          target.object = "{mic}"
+          target.object = {json.dumps(mic)}
           node.autoconnect = true
           node.dont-fallback = true
           node.dont-reconnect = true
@@ -153,7 +153,12 @@ class Engine:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.mix = None
         self.voice = None
-        self.voice_key = None
+        self.voice_key = None       # (graph structure, mic): a change here needs a new voice child
+        self.voice_ctl = {}         # control values the running chain has
+        self.pending = {}           # control values still to send
+        self.voice_node = None      # PipeWire id of vox_voice_in (holds the filter controls)
+        self.inflight = None        # (pw-cli process, values) of the update being sent
+        self.live_updates = 0       # count of live control updates (for tests / status)
         self.last_error = ""
         self.kill_stale()
 
@@ -201,30 +206,108 @@ class Engine:
         return p is not None and p.poll() is None
 
     def set_voice(self, preset: dict | None, mic: str):
-        """Run the voice chain for `preset`; preset None = microphone muted (chain stopped)."""
+        """Run the voice chain for `preset`; preset None = microphone muted (chain stopped).
+
+        If the running chain has the same structure (same plugins and control names) and the
+        same mic, only control values differ: they are sent live with set-param, without a new
+        child and without an audio gap. Anything else starts a new voice child.
+        """
         if preset is None or not mic:
-            self._stop(self.voice)
-            self.voice, self.voice_key = None, None
+            self._stop_voice()
             return
-        key = (preset["id"], json.dumps(preset, sort_keys=True, default=str), mic)
+        key = (effects.structure(preset), mic)
+        ctl = effects.control_map(preset)
         if self.running(self.voice) and key == self.voice_key:
+            want = {k: v for k, v in ctl.items() if self.voice_ctl.get(k) != v}
+            self.pending.update(want)
+            for k in list(self.pending):           # dropped back to what is already running
+                if self.voice_ctl.get(k) == ctl.get(k):
+                    del self.pending[k]
+            self.flush()
             return
-        self._stop(self.voice)
+        self._stop_voice()
         try:
             self.voice = self._spawn("voice.conf", voice_conf(preset, mic))
-            self.voice_key = key
+            self.voice_key, self.voice_ctl = key, ctl
             self.last_error = ""
         except Exception as e:  # noqa: BLE001
             self.voice, self.voice_key = None, None
             self.last_error = str(e)
 
+    def _stop_voice(self):
+        self._stop(self.voice)
+        self.voice, self.voice_key, self.voice_ctl, self.pending, self.voice_node = None, None, {}, {}, None
+        if self.inflight:
+            self.inflight[0].wait()
+            self.inflight = None
+
+    def find_voice_node(self):
+        """Id of our vox_voice_in node (owned by our voice child), or None if not registered yet."""
+        if not self.running(self.voice):
+            return None
+        try:
+            objs = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+        clients = {o["id"]: o["info"]["props"].get("application.process.id")
+                   for o in objs if o.get("type", "").endswith("Client") and o.get("info")}
+        for o in objs:
+            if o.get("type", "").endswith("Node") and o.get("info"):
+                p = o["info"].get("props", {})
+                if p.get("node.name") == "vox_voice_in" and \
+                        str(clients.get(p.get("client.id"))) == str(self.voice.pid):
+                    return o["id"]
+        return None
+
+    def flush(self) -> bool:
+        """Send pending control values to the running chain. False = not done yet (call again).
+
+        One short-lived `pw-cli set-param` per batch, at most one in flight; values that arrive
+        meanwhile are merged and sent next, so slider drags coalesce instead of queueing up.
+        """
+        if self.inflight:
+            proc, sent = self.inflight
+            if proc.poll() is None:
+                return False
+            self.inflight = None
+            if proc.returncode != 0:          # node vanished or id stale: look it up again
+                self.voice_node = None
+                for k, v in sent.items():
+                    self.pending.setdefault(k, v)
+                    self.voice_ctl.pop(k, None)
+        if not self.pending:
+            return True
+        if not self.running(self.voice):
+            return False
+        if self.voice_node is None:
+            self.voice_node = self.find_voice_node()
+            if self.voice_node is None:
+                return False
+        sent, self.pending = self.pending, {}
+        params = " ".join(f"{json.dumps(k)} {float(v)!r}" for k, v in sent.items())
+        try:
+            proc = subprocess.Popen(["pw-cli", "set-param", str(self.voice_node), "Props",
+                                     f"{{ params = [ {params} ] }}"], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, preexec_fn=_pdeathsig)
+        except OSError as e:
+            self.last_error = f"pw-cli: {e}"
+            self.pending = {**sent, **self.pending}
+            return False
+        self.inflight = (proc, sent)
+        self.voice_ctl.update(sent)
+        self.live_updates += 1
+        return False
+
+    def busy(self) -> bool:
+        return bool(self.pending or self.inflight)
+
     def healthy(self) -> dict:
         return {"mix": self.running(self.mix), "voice": self.running(self.voice)}
 
     def stop(self):
-        self._stop(self.voice)
+        self._stop_voice()
         self._stop(self.mix)
-        self.voice = self.mix = None
+        self.mix = None
         for f in self.dir.glob("*"):
             try:
                 f.unlink()

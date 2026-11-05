@@ -1,10 +1,5 @@
 [
- {
-  "id": "clean",
-  "name": "Clean",
-  "description": "Dry microphone, no effects",
-  "chain": []
- },
+ {"id": "clean", "name": "Clean", "description": "Dry microphone, no effects", "chain": []},
  {
   "id": "denoise",
   "name": "Denoise",
@@ -17,9 +12,14 @@
     "control": {
      "VAD Threshold (%)": 50.0,
      "VAD Grace Period (ms)": 200.0,
-     "Retroactive VAD Grace (ms)": 0.0
+     "Retroactive VAD Grace (ms)": 0.0,
+     "Dry Mix": 0.0
     }
    }
+  ],
+  "tune": [
+   {"id": "threshold", "name": "Voice threshold", "node": 0, "control": "VAD Threshold (%)", "min": 0, "max": 99, "step": 1, "unit": "%"},
+   {"id": "keep", "name": "Original kept", "node": 0, "control": "Dry Mix", "min": 0, "max": 100, "step": 1, "unit": "%", "scale": "pct"}
   ]
  },
  {
@@ -35,6 +35,9 @@
      "Pitch co-efficient": 0.75
     }
    }
+  ],
+  "tune": [
+   {"id": "pitch", "name": "Pitch", "node": 0, "control": "Pitch co-efficient", "min": 0.5, "max": 1.0, "step": 0.01, "unit": "x"}
   ]
  },
  {
@@ -50,6 +53,9 @@
      "Pitch co-efficient": 1.6
     }
    }
+  ],
+  "tune": [
+   {"id": "pitch", "name": "Pitch", "node": 0, "control": "Pitch co-efficient", "min": 1.0, "max": 2.0, "step": 0.01, "unit": "x"}
   ]
  },
  {
@@ -88,6 +94,11 @@
      "Tail level (dB)": -16.0
     }
    }
+  ],
+  "tune": [
+   {"id": "pitch", "name": "Pitch", "node": 0, "control": "Pitch co-efficient", "min": 0.5, "max": 0.85, "step": 0.01, "unit": "x"},
+   {"id": "grit", "name": "Grit", "node": 1, "control": "Distortion level", "min": 0, "max": 100, "step": 1, "unit": "%", "scale": "pct"},
+   {"id": "hall", "name": "Hall level", "node": 2, "control": "Tail level (dB)", "min": -40, "max": 0, "step": 0.5, "unit": "dB"}
   ]
  },
  {
@@ -120,7 +131,12 @@
     }
    }
   ],
-  "gain": 1.4
+  "gain": 1.4,
+  "drywet": true,
+  "tune": [
+   {"id": "freq", "name": "Ring frequency", "node": 0, "control": "Frequency (Hz)", "min": 10, "max": 200, "step": 1, "unit": "Hz"},
+   {"id": "feedback", "name": "Flanger feedback", "node": 1, "control": "Feedback", "min": -0.9, "max": 0.9, "step": 0.01}
+  ]
  },
  {
   "id": "alien",
@@ -149,6 +165,11 @@
      "Output attenuation (dB)": -3.0
     }
    }
+  ],
+  "drywet": true,
+  "tune": [
+   {"id": "shift", "name": "Pitch shift", "node": 0, "control": "Pitch shift", "min": 0.5, "max": 3.0, "step": 0.01, "unit": "x"},
+   {"id": "warble", "name": "Warble speed", "node": 1, "control": "LFO frequency (Hz)", "min": 2, "max": 30, "step": 0.5, "unit": "Hz"}
   ]
  },
  {
@@ -192,7 +213,12 @@
     }
    }
   ],
-  "gain": 0.8
+  "gain": 0.8,
+  "tune": [
+   {"id": "lowcut", "name": "Low cut", "node": 0, "control": "Freq", "min": 100, "max": 1000, "step": 10, "unit": "Hz"},
+   {"id": "highcut", "name": "High cut", "node": 1, "control": "Freq", "min": 2000, "max": 8000, "step": 50, "unit": "Hz"},
+   {"id": "drive", "name": "Drive", "node": 3, "control": "Drive level", "min": 1, "max": 3, "step": 0.05}
+  ]
  },
  {
   "id": "megaphone",
@@ -227,7 +253,11 @@
     }
    }
   ],
-  "gain": 0.8
+  "gain": 0.8,
+  "tune": [
+   {"id": "lowcut", "name": "Low cut", "node": 0, "control": "Freq", "min": 200, "max": 1500, "step": 10, "unit": "Hz"},
+   {"id": "distortion", "name": "Distortion", "node": 2, "control": "Distortion level", "min": 0, "max": 100, "step": 1, "unit": "%", "scale": "pct"}
+  ]
  },
  {
   "id": "cave",
@@ -248,6 +278,11 @@
      "Tail level (dB)": -9.0
     }
    }
+  ],
+  "tune": [
+   {"id": "time", "name": "Reverb time", "node": 0, "control": "Reverb time (s)", "min": 0.5, "max": 15, "step": 0.1, "unit": "s"},
+   {"id": "tail", "name": "Reverb level", "node": 0, "control": "Tail level (dB)", "min": -40, "max": 0, "step": 0.5, "unit": "dB"},
+   {"id": "dry", "name": "Dry level", "node": 0, "control": "Dry signal level (dB)", "min": -70, "max": 0, "step": 0.5, "unit": "dB"}
   ]
  },
  {
@@ -278,7 +313,11 @@
     }
    }
   ],
-  "gain": 1.5
+  "gain": 1.5,
+  "tune": [
+   {"id": "muffle", "name": "Muffle (low-pass)", "node": 0, "control": "Freq", "min": 300, "max": 3000, "step": 10, "unit": "Hz"},
+   {"id": "wobble", "name": "Wobble speed", "node": 1, "control": "LFO frequency (Hz)", "min": 2, "max": 15, "step": 0.5, "unit": "Hz"}
+  ]
  },
  {
   "id": "retro",
@@ -303,6 +342,10 @@
      "Gain": 0
     }
    }
+  ],
+  "tune": [
+   {"id": "bits", "name": "Bit depth", "node": 0, "control": "Bit depth", "min": 2, "max": 16, "step": 1, "unit": "bit"},
+   {"id": "rate", "name": "Sample rate", "node": 0, "control": "Sample rate (Hz)", "min": 2, "max": 100, "step": 1, "unit": "%", "scale": "pct"}
   ]
  },
  {
@@ -327,6 +370,10 @@
      "Tap 4 level (dB)": -26.0
     }
    }
+  ],
+  "tune": [
+   {"id": "speed", "name": "Tape speed", "node": 0, "control": "Tape speed (inches/sec, 1=normal)", "min": 0.25, "max": 4, "step": 0.05, "unit": "x"},
+   {"id": "level", "name": "Echo level", "node": 0, "control": "Tap 1 level (dB)", "min": -40, "max": 0, "step": 0.5, "unit": "dB"}
   ]
  },
  {
@@ -346,6 +393,10 @@
     }
    }
   ],
+  "tune": [
+   {"id": "blend", "name": "Blend", "node": 0, "control": "blend", "min": 0, "max": 100, "step": 1, "unit": "%", "scale": "pct"},
+   {"id": "tail", "name": "Tail", "node": 0, "control": "tail", "min": 0, "max": 100, "step": 1, "unit": "%", "scale": "pct"}
+  ],
   "extra": true
  },
  {
@@ -358,8 +409,18 @@
     "plugin": "http://lsp-plug.in/plugins/lv2/compressor_mono",
     "package": "lsp-plugins-lv2",
     "in": "in",
-    "out": "out"
+    "out": "out",
+    "control": {
+     "al": 0.25119,
+     "cr": 4.0,
+     "mk": 1.0
+    }
    }
+  ],
+  "tune": [
+   {"id": "threshold", "name": "Threshold", "node": 0, "control": "al", "min": -40, "max": 0, "step": 0.5, "unit": "dB", "scale": "db"},
+   {"id": "ratio", "name": "Ratio", "node": 0, "control": "cr", "min": 1, "max": 20, "step": 0.1, "unit": ":1"},
+   {"id": "makeup", "name": "Makeup", "node": 0, "control": "mk", "min": 0, "max": 24, "step": 0.5, "unit": "dB", "scale": "db"}
   ],
   "extra": true
  }

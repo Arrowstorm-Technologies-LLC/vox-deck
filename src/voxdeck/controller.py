@@ -12,7 +12,7 @@ from .meter import PeakMeter
 from .paths import config_dir, socket_path
 
 DEFAULTS = {"mic": "", "preset": "clean", "enabled": True, "muted": False,
-            "board_volume": 0.8, "monitor": False, "monitor_target": ""}
+            "board_volume": 0.8, "monitor": False, "monitor_target": "", "tuning": {}}
 
 
 class Controller(QObject):
@@ -21,11 +21,13 @@ class Controller(QObject):
     def __init__(self):
         super().__init__()
         self.sfile = config_dir() / "settings.json"
-        self.s = dict(DEFAULTS)
+        self.s = json.loads(json.dumps(DEFAULTS))
         try:
             self.s.update(json.loads(self.sfile.read_text()))
         except (OSError, ValueError):
             pass
+        if not isinstance(self.s.get("tuning"), dict):
+            self.s["tuning"] = {}
         self.presets = effects.load_presets()
         if self.s["preset"] not in self.presets:
             self.s["preset"] = "clean"
@@ -43,6 +45,11 @@ class Controller(QObject):
         self.timer.timeout.connect(self._tick)
         self.timer.start(1000)
         self._last = None
+        self.save_timer = QTimer(self)          # slider drags save once they settle
+        self.save_timer.setSingleShot(True)
+        self.save_timer.timeout.connect(self.save)
+        self.flush_timer = QTimer(self)         # retries live updates while a new chain registers
+        self.flush_timer.timeout.connect(self._flush)
         # level meters run only while someone looks: the window, a levels subscriber or a recent query
         self.meter = PeakMeter()
         self.meter_window = False
@@ -59,12 +66,48 @@ class Controller(QObject):
     def save(self):
         self.sfile.write_text(json.dumps(self.s, indent=1))
 
-    def apply_voice(self):
-        pr = self.presets[self.s["preset"] if self.s["enabled"] else "clean"]
-        self.engine.set_voice(None if self.s["muted"] else pr, self.s["mic"])
+    def effective(self, pid: str) -> dict:
+        """Preset `pid` with the user's live tuning applied."""
+        return effects.apply_tuning(self.presets[pid], self.s["tuning"].get(pid, {}))
+
+    def apply_voice(self, save=True):
+        pid = self.s["preset"] if self.s["enabled"] else "clean"
+        self.engine.set_voice(None if self.s["muted"] else self.effective(pid), self.s["mic"])
+        if self.engine.busy() and not self.flush_timer.isActive():
+            self.flush_timer.start(30)
         self.update_meters()
-        self.save()
+        if save:
+            self.save()
+        else:
+            self.save_timer.start(800)
         self._emit()
+
+    def _flush(self):
+        self.engine.flush()
+        if not self.engine.busy() or not self.engine.running(self.engine.voice):
+            self.flush_timer.stop()
+
+    # -- live tuning
+    def params(self, pid=None) -> list:
+        pid = pid or self.s["preset"]
+        return effects.tunables(self.effective(pid))
+
+    def set_param(self, tid: str, value, pid=None):
+        """Set tunable `tid` of preset `pid` (default: current) live. Returns the clamped value."""
+        pid = pid or self.s["preset"]
+        if pid not in self.presets:
+            raise ValueError(f"unknown preset {pid!r}")
+        spec = {t["id"]: t for t in effects.tunables(self.presets[pid])}.get(tid)
+        if spec is None:
+            raise ValueError(f"preset {pid!r} has no tunable {tid!r}")
+        v = effects.clamp(spec, value)
+        self.s["tuning"].setdefault(pid, {})[tid] = v
+        self.apply_voice(save=False)
+        return v
+
+    def reset_params(self, pid=None):
+        self.s["tuning"].pop(pid or self.s["preset"], None)
+        self.apply_voice()
 
     def set_preset(self, ref) -> bool:
         ids = [k for k, p in self.presets.items() if p["available"]]
@@ -113,7 +156,8 @@ class Controller(QObject):
                 "preset": p["id"], "preset_name": p["name"], "mic": self.s["mic"],
                 "monitor": self.s["monitor"], "board_volume": self.s["board_volume"],
                 "playing": self.board.reap(), "engine": self.engine.healthy(),
-                "source": audio.MIX_DESC, "error": self.engine.last_error}
+                "source": audio.MIX_DESC, "error": self.engine.last_error,
+                "tuned": bool(self.s["tuning"].get(p["id"]))}
 
     # -- level meters
     def meters_wanted(self) -> bool:
@@ -169,6 +213,8 @@ class Controller(QObject):
                 c.write(line)
 
     def shutdown(self):
+        if self.save_timer.isActive():
+            self.save()
         self.meter.unwatch_all()
         self.board.stop_all()
         self.engine.stop()
@@ -222,6 +268,17 @@ class Controller(QObject):
             return {"ok": True, "presets": [
                 {"id": k, "name": p["name"], "available": p["available"], "missing": p["missing"],
                  "description": p.get("description", "")} for k, p in self.presets.items()]}
+        elif cmd == "params":
+            pid = m.get("preset") or self.s["preset"]
+            if pid not in self.presets:
+                return {"ok": False, "error": f"unknown preset {pid!r}"}
+            return {"ok": True, "preset": pid, "params": self.params(pid)}
+        elif cmd == "param":
+            if m.get("reset"):
+                self.reset_params(m.get("preset"))
+                return {"ok": True, "cmd": cmd, "params": self.params(m.get("preset"))}
+            v = self.set_param(str(m.get("id", "")), m.get("value"), m.get("preset"))
+            return {"ok": True, "cmd": cmd, "id": m.get("id"), "value": v}
         elif cmd == "clips":
             return {"ok": True, "clips": [c["name"] for c in self.board.clips]}
         elif cmd == "mics":

@@ -24,6 +24,13 @@ def main(argv=None):
     sub.add_parser("presets", help="list presets")
     sub.add_parser("clips", help="list clips")
     sub.add_parser("mics", help="list microphones")
+    p = sub.add_parser("params", help="list the tunable controls of a preset (default: current)")
+    p.add_argument("preset", nargs="?")
+    p = sub.add_parser("param", help="set a tunable control live, e.g. `param pitch 0.8`; `param --reset`")
+    p.add_argument("id", nargs="?")
+    p.add_argument("value", nargs="?", type=float)
+    p.add_argument("--preset", help="preset id (default: current)")
+    p.add_argument("--reset", action="store_true", help="restore the preset's own values")
     sub.add_parser("levels", help="print mic and Voice Mix peak levels (dBFS)")
     p = sub.add_parser("subscribe", help="stream status changes as JSON lines")
     p.add_argument("--levels", action="store_true", help="also stream level meter events")
@@ -42,11 +49,22 @@ def main(argv=None):
             msg["on"] = a.state == "on"
         elif a.cmd == "mic":
             msg["source"] = a.source
+        elif a.cmd == "params" and a.preset:
+            msg["preset"] = a.preset
+        elif a.cmd == "param":
+            if a.preset:
+                msg["preset"] = a.preset
+            if a.reset:
+                msg["reset"] = True
+            elif a.id is None or a.value is None:
+                ap.error("param needs an id and a value (or --reset)")
+            else:
+                msg["id"], msg["value"] = a.id, a.value
         r = ipc.request(msg)
     except (OSError, KeyboardInterrupt) as e:
         print(f"vox-deck: app not running ({e})", file=sys.stderr)
         return 2
-    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic") else 1))
+    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "param") else 1))
     return 0 if r.get("ok", True) else 1
 
 
