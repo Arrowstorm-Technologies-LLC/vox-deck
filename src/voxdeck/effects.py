@@ -7,6 +7,7 @@ whose plugins are missing are reported as unavailable instead of failing.
 import ctypes
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -69,13 +70,28 @@ def ladspa_labels(name: str) -> dict:
     return out
 
 
+_PREFIX_RE = re.compile(r"(?:@prefix|PREFIX)\s+([\w.-]*):\s*<([^>]*)>", re.I)
+
+
+def manifest_declares(text: str, uri: str) -> bool:
+    """True if a Turtle manifest names `uri`, as <full-uri> or as prefix:local."""
+    if f"<{uri}>" in text:
+        return True
+    for pfx, ns in _PREFIX_RE.findall(text):
+        if ns and uri.startswith(ns) and "/" not in uri[len(ns):]:
+            name = re.escape(f"{pfx}:{uri[len(ns):]}")
+            if re.search(rf"(?<![\w:.-]){name}(?![\w:.-])", text):
+                return True
+    return False
+
+
 @lru_cache(maxsize=None)
 def lv2_available(uri: str) -> bool:
     for d in LV2_DIRS:
         if d.is_dir():
             for m in d.glob("*/manifest.ttl"):
                 try:
-                    if uri in m.read_text(errors="ignore"):
+                    if manifest_declares(m.read_text(errors="ignore"), uri):
                         return True
                 except OSError:
                     pass

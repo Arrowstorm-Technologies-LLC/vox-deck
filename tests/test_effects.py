@@ -16,3 +16,31 @@ def test_configs_render():
     assert "Audio/Source" in audio.mix_conf()
     assert "vox_voice_in" in audio.voice_conf(p, "some_mic")
     assert "stream.capture.sink = true" in audio.voice_conf(p, "x.monitor")
+
+
+PREFIXED = """@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix plug: <http://lsp-plug.in/plugins/lv2/> .
+plug:gott_compressor_mono
+\ta lv2:Plugin .
+plug:compressor_mono
+\ta lv2:Plugin ;
+\trdfs:seeAlso <compressor_mono.ttl> .
+"""
+FULL = "<http://lsp-plug.in/plugins/lv2/compressor_mono>\n\ta lv2:Plugin .\n"
+URI = "http://lsp-plug.in/plugins/lv2/compressor_mono"
+
+
+def test_manifest_prefixed_name():
+    assert effects.manifest_declares(PREFIXED, URI)
+    assert effects.manifest_declares(
+        "PREFIX x: <http://lsp-plug.in/plugins/lv2/>\nx:compressor_mono a lv2:Plugin .", URI)
+
+
+def test_manifest_full_uri():
+    assert effects.manifest_declares(FULL, URI)
+
+
+def test_manifest_no_false_positive():
+    assert not effects.manifest_declares(PREFIXED.replace("plug:compressor_mono", "plug:other"), URI)
+    assert not effects.manifest_declares(
+        "@prefix plug: <http://other/> .\nplug:compressor_mono a x .", URI)
