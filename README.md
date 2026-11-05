@@ -58,6 +58,17 @@ systemctl --user enable --now vox-deck.service
 
 Settings, clips and your own presets live in `~/.config/vox-deck/`.
 
+### Import and export
+
+**Export** saves to one `.voxdeck` file: the soundboard (pad order, names, colours, per-clip volume, board volume, and the sound files themselves, so the board works on another machine), your presets, or both. Right-click any preset to export just that one. **Import...** shows what a file holds and asks what to do:
+
+- presets whose id you already have: keep both (the imported copies get new names), replace yours, or skip them. Presets named like a built-in always come in under a new name; built-ins are never replaced.
+- the soundboard: add its pads to yours, replace your board (asks again; your own sound files are left alone), or skip it.
+
+Imported sounds are copied to `~/.local/share/vox-deck/clips/<board>-<date>/`.
+
+A `.voxdeck` file is a zip archive with a `manifest.json` and a `clips/` folder. Imported files are treated as untrusted: nothing in them runs, files are never unpacked by their own names (only sounds the manifest lists, under names Vox Deck picks), sizes are capped while reading (1 GiB total, 200 MiB per sound, compression-ratio check), sounds must start like real wav/flac/ogg/opus/mp3 data, and presets go through the same checks as preset files. If anything fails, nothing is changed.
+
 ### Presets
 
 Built in, using plugins that ship with common distro packages: Clean, Denoise (RNNoise), Deep, Chipmunk, Demon, Robot, Alien, Radio, Megaphone, Cave, Underwater, Retro 8-bit, Echo.
@@ -120,11 +131,14 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"save-preset","name":"My Voice"}` | save the current preset with its tuning as a new preset (add `"preset"` for another one); reply has the new `id` |
 | `{"cmd":"rename-preset","preset":"my-voice","name":"Gravel"}` | rename one of your presets |
 | `{"cmd":"delete-preset","preset":"my-voice"}` | delete one of your presets |
+| `{"cmd":"export","path":"/abs/file.voxdeck","board":true,"presets":"user"}` | export (`presets`: `"user"`, `"none"` or a list of ids) |
+| `{"cmd":"inspect","path":"/abs/file.voxdeck"}` | what a file holds, and which preset ids clash |
+| `{"cmd":"import","path":"/abs/file.voxdeck","presets":"rename","board":"append"}` | import; `presets`: rename / replace / skip, `board`: append / replace / skip |
 | `{"cmd":"levels"}` | peak levels in dBFS: `mic` (selected microphone) and `out` (Voice Mix); `null` while a meter is starting |
 | `{"cmd":"subscribe"}` | keep the connection open; status events are pushed as they change |
 | `{"cmd":"subscribe","levels":true}` | as above, plus `{"event":"levels","mic":-18.0,"out":-21.5}` about 10 times a second |
 
-CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, and so on (`vox-deck --help`).
+CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, `vox-deck export board.voxdeck`, `vox-deck import --dry-run board.voxdeck`, `vox-deck import board.voxdeck --presets skip --board replace`, and so on (`vox-deck --help`).
 
 The meters are cheap: they use PulseAudio-protocol peak-detect streams, so pipewire-pulse computes the peaks and the app receives about 25 numbers a second per meter instead of audio. They only run while the window is visible, a client is subscribed to levels, or for 10 seconds after a `levels`/`status` query.
 

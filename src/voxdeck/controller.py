@@ -6,7 +6,7 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer
 
-from . import audio, effects
+from . import audio, bundle, effects
 from .board import Board
 from .meter import PeakMeter
 from .paths import config_dir, socket_path
@@ -18,6 +18,7 @@ DEFAULTS = {"mic": "", "preset": "clean", "enabled": True, "muted": False,
 class Controller(QObject):
     changed = Signal()
     presets_changed = Signal()
+    board_changed = Signal()
 
     def __init__(self):
         super().__init__()
@@ -147,6 +148,36 @@ class Controller(QObject):
         self.reload_presets()
         self.apply_voice()
 
+    # -- import / export
+    def export(self, path, board=True, presets="user") -> dict:
+        """presets: "user" (all of yours), "none", or a list of preset ids."""
+        if presets == "user":
+            sel = [p for p in self.presets.values() if p["user"]]
+        elif presets in ("none", None):
+            sel = []
+        else:
+            missing = [i for i in presets if i not in self.presets]
+            if missing:
+                raise ValueError(f"unknown presets: {', '.join(missing)}")
+            sel = [self.presets[i] for i in presets]
+        if not sel and not board:
+            raise ValueError("nothing to export")
+        return bundle.export_bundle(path, sel, self.board.clips if board else None,
+                                    self.s["board_volume"] if board else None)
+
+    def inspect(self, path) -> dict:
+        return bundle.summary(bundle.read_bundle(path), self.presets)
+
+    def import_bundle(self, path, preset_mode="rename", board_mode="append") -> dict:
+        b = bundle.read_bundle(path)
+        rep = bundle.apply_import(b, self.presets, self.board, preset_mode, board_mode)
+        if "board_volume" in rep:
+            self.s["board_volume"] = rep["board_volume"]
+        self.reload_presets()
+        self.board_changed.emit()
+        self.apply_voice()
+        return rep
+
     def reset_params(self, pid=None):
         self.s["tuning"].pop(pid or self.s["preset"], None)
         self.apply_voice()
@@ -266,6 +297,13 @@ class Controller(QObject):
         except OSError:
             pass
 
+    @staticmethod
+    def _path(m) -> str:
+        p = m.get("path")
+        if not isinstance(p, str) or not os.path.isabs(p):
+            raise ValueError("path must be an absolute file path")
+        return p
+
     def _lease_meters(self, seconds=10.0):
         """A one-shot level query keeps the meters running for a while so the next one has data."""
         self.meter_lease = time.monotonic() + seconds
@@ -314,6 +352,14 @@ class Controller(QObject):
         elif cmd == "save-preset":
             pid = self.save_preset(m.get("name", ""), m.get("preset"))
             return {"ok": True, "cmd": cmd, "id": pid}
+        elif cmd == "export":
+            rep = self.export(self._path(m), bool(m.get("board", True)), m.get("presets", "user"))
+            return {"ok": True, "cmd": cmd, **rep}
+        elif cmd == "inspect":
+            return {"ok": True, "cmd": cmd, **self.inspect(self._path(m))}
+        elif cmd == "import":
+            rep = self.import_bundle(self._path(m), m.get("presets", "rename"), m.get("board", "append"))
+            return {"ok": True, "cmd": cmd, **rep}
         elif cmd == "rename-preset":
             self.rename_preset(str(m.get("preset", "")), m.get("name", ""))
         elif cmd == "delete-preset":

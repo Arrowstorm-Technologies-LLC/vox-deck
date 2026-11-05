@@ -8,11 +8,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QElapsedTimer, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QFileDialog,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QColorDialog, QComboBox, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow,
-                               QMenu, QMessageBox, QPushButton, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QMenu, QMessageBox, QPushButton, QRadioButton, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
 
-from . import audio
+from . import audio, bundle
 from .board import COLORS
 from .controller import Controller
 
@@ -36,7 +36,16 @@ QPushButton#mute:checked { background: #8a2a2a; border-color: #b33a3a; color: wh
 QPushButton#pad { border: none; border-radius: 10px; font-size: 14px; font-weight: bold; color: white; }
 QPushButton#pad:pressed { padding-top: 9px; }
 QPushButton#add { background: #1a1d24; border: 2px dashed #353a48; color: #6d7385; font-size: 24px; border-radius: 10px; }
-QCheckBox { color: #d7dae0; }
+QCheckBox, QRadioButton { color: #d7dae0; spacing: 8px; }
+QRadioButton::indicator { width: 12px; height: 12px; border-radius: 8px; border: 2px solid #5b6070; background: #15171c; }
+QRadioButton::indicator:checked { border: 2px solid #c9cdfb; background: #5865f2; }
+QMenu { background: #1b1e25; color: #e6e8ec; border: 1px solid #2f3442; padding: 4px; }
+QMenu::item { padding: 5px 20px; border-radius: 4px; }
+QMenu::item:selected { background: #5865f2; color: white; }
+QMenu::item:disabled { color: #5b6070; }
+QMenu::separator { height: 1px; background: #2f3442; margin: 4px 6px; }
+QDialog, QMessageBox { background: #1b1e25; }
+QPushButton::menu-indicator { subcontrol-position: right center; right: 6px; }
 QFrame#line { color: #2a2e3a; }
 """
 
@@ -157,6 +166,80 @@ class TuneSlider(QWidget):
         self.val.setText(fmt_value(self.spec, v))
 
 
+class ImportDialog(QDialog):
+    """Shows what a bundle holds and asks how to bring it in. Nothing is overwritten unless the
+    user picks a replace option (and confirms replacing the board)."""
+
+    def __init__(self, parent, info, board_pads):
+        super().__init__(parent)
+        self.setWindowTitle("Import")
+        self.board_pads = board_pads
+        v = QVBoxLayout(self)
+        v.setContentsMargins(20, 16, 20, 14)
+        v.setSpacing(7)
+        n, b = len(info["presets"]), info["board"]
+        parts = []
+        if n:
+            parts.append(f"{n} preset{'s' if n != 1 else ''}: " + ", ".join(p["name"] for p in info["presets"][:6])
+                         + (" ..." if n > 6 else ""))
+        if b:
+            parts.append(f"a soundboard with {b['clips']} sound{'s' if b['clips'] != 1 else ''}")
+        lab = QLabel("This file has " + (" and ".join(parts) if parts else "nothing to import") + ".")
+        lab.setWordWrap(True)
+        v.addWidget(lab)
+        self.pmode = self.bmode = None
+        if info["conflicts"]:
+            v.addWidget(header("Presets you already have"))
+            by_id = {p["id"]: p["name"] for p in info["presets"]}
+            names = ", ".join(by_id.get(i, i) for i in info["conflicts"])
+            self.pmode = self._choices(v, [("rename", f"Keep both ({names}): the imported copies get new names"),
+                                           ("replace", "Replace my presets with the imported ones"),
+                                           ("skip", "Skip those presets")])
+        if info["builtin_ids"]:
+            note = QLabel("Presets named like a built-in are imported under a new id (built-ins stay read-only).")
+            note.setWordWrap(True)
+            v.addWidget(note)
+        if b:
+            v.addWidget(header("Soundboard"))
+            self.bmode = self._choices(v, [("append", f"Add the {b['clips']} pads to my board"),
+                                           ("replace", f"Replace my board ({board_pads} pads; my sound files are kept)"),
+                                           ("skip", "Do not import the board")])
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        ok = bb.addButton("Import", QDialogButtonBox.ButtonRole.AcceptRole)
+        ok.setEnabled(bool(parts))
+        bb.accepted.connect(self.confirm)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    @staticmethod
+    def _choices(layout, options):
+        group = QButtonGroup(layout)
+        for i, (key, text) in enumerate(options):
+            r = QRadioButton(text)
+            r.setProperty("key", key)
+            r.setChecked(i == 0)
+            group.addButton(r)
+            layout.addWidget(r)
+        return group
+
+    @staticmethod
+    def _key(group, default):
+        return group.checkedButton().property("key") if group else default
+
+    def preset_mode(self):
+        return self._key(self.pmode, "rename")
+
+    def board_mode(self):
+        return self._key(self.bmode, "skip")
+
+    def confirm(self):
+        if self.board_mode() == "replace" and self.board_pads and QMessageBox.question(
+                self, "Replace soundboard", f"Replace your soundboard ({self.board_pads} pads) with the imported one?"
+                " Your sound files stay where they are.") != QMessageBox.StandardButton.Yes:
+            return
+        self.accept()
+
+
 class Pad(QPushButton):
     def __init__(self, win, idx, clip):
         super().__init__(clip["name"])
@@ -211,6 +294,20 @@ class Window(QMainWindow):
         t.setObjectName("title")
         top.addWidget(t)
         top.addStretch()
+        imp = QPushButton("Import...")
+        imp.setToolTip("Bring in presets and/or a soundboard from a .voxdeck file")
+        imp.clicked.connect(self.import_file)
+        top.addWidget(imp)
+        exp = QPushButton("Export")
+        exp.setToolTip("Save presets and/or the soundboard (with its sounds) to a .voxdeck file")
+        em = QMenu(exp)
+        em.addAction("Soundboard and my presets...", lambda: self.export_file(True, "user"))
+        em.addAction("Soundboard only...", lambda: self.export_file(True, "none"))
+        em.addAction("My presets only...", lambda: self.export_file(False, "user"))
+        em.addAction("Current preset...", lambda: self.export_file(False, [self.ctl.s["preset"]]))
+        exp.setMenu(em)
+        top.addWidget(exp)
+        top.addSpacing(12)
         self.power = QPushButton("Effects ON")
         self.power.setObjectName("power")
         self.power.setCheckable(True)
@@ -301,6 +398,7 @@ class Window(QMainWindow):
         self.fill_mics()
         self.mic.activated.connect(lambda: ctl.set_mic(self.mic.currentData()))
         self.rebuild_board()
+        ctl.board_changed.connect(self.rebuild_board)
         ctl.changed.connect(self.refresh)
         self.refresh()
         self.resize(800, 680)
@@ -415,7 +513,56 @@ class Window(QMainWindow):
             QMessageBox.warning(self, "Vox Deck", str(e))
 
     def preset_menu_extra(self, menu, pid):
-        """Hook for more preset actions (export)."""
+        menu.addSeparator()
+        menu.addAction("Export...", lambda: self.export_file(False, [pid]))
+
+    def export_file(self, board, presets):
+        if presets == "user" and not board and not any(p["user"] for p in self.ctl.presets.values()):
+            QMessageBox.information(self, "Export", "You have no presets of your own yet. Use \"Save as preset...\" first.")
+            return
+        base = "vox-deck-board" if board else (presets[0] if isinstance(presets, list) else "vox-deck-presets")
+        path, _ = QFileDialog.getSaveFileName(self, "Export", str(Path.home() / (base + bundle.SUFFIX)),
+                                              "Vox Deck file (*.voxdeck)")
+        if not path:
+            return
+        if not path.endswith(bundle.SUFFIX):
+            path += bundle.SUFFIX
+        try:
+            rep = self.ctl.export(path, board, presets)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Export", f"Export failed: {e}")
+            return
+        msg = f"Saved {rep['presets']} preset(s)" + (f" and {rep['clips']} sound(s)" if board else "") + f" to {path}."
+        if rep["skipped"]:
+            msg += "\n\nLeft out (file missing or not audio): " + ", ".join(rep["skipped"])
+        QMessageBox.information(self, "Export", msg)
+
+    def import_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import", str(Path.home()),
+                                              "Vox Deck file (*.voxdeck *.zip)")
+        if not path:
+            return
+        try:
+            info = self.ctl.inspect(path)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Import", f"This file can not be imported: {e}")
+            return
+        dlg = ImportDialog(self, info, len(self.ctl.board.clips))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            rep = self.ctl.import_bundle(path, dlg.preset_mode(), dlg.board_mode())
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Import", f"Import failed, nothing was changed: {e}")
+            return
+        bits = []
+        if rep["presets_added"] or rep["presets_replaced"]:
+            bits.append(f"{len(rep['presets_added'])} preset(s) added, {len(rep['presets_replaced'])} replaced")
+        if rep["presets_skipped"]:
+            bits.append(f"{len(rep['presets_skipped'])} skipped")
+        if rep["clips"]:
+            bits.append(f"{rep['clips']} pad(s) {'replaced the board' if rep['board'] == 'replace' else 'added'}")
+        QMessageBox.information(self, "Import", ("Imported: " + "; ".join(bits)) if bits else "Nothing was imported.")
 
     def save_preset(self):
         pid = self.ctl.s["preset"]

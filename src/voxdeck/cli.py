@@ -1,6 +1,7 @@
 """`vox-deck` command line client for the running app."""
 import argparse
 import json
+import os
 import sys
 
 from . import ipc
@@ -39,6 +40,17 @@ def main(argv=None):
     p.add_argument("name")
     p = sub.add_parser("delete", help="delete one of your presets (built-ins are read-only)")
     p.add_argument("preset")
+    p = sub.add_parser("export", help="export your presets and/or the soundboard (with its sounds) to a .voxdeck file")
+    p.add_argument("file")
+    p.add_argument("--no-board", action="store_true", help="leave the soundboard out")
+    p.add_argument("--presets", default="user", help="'user' (all yours, default), 'none', or ids separated by commas")
+    p = sub.add_parser("import", help="import a .voxdeck file (never overwrites unless told to)")
+    p.add_argument("file")
+    p.add_argument("--presets", choices=["rename", "replace", "skip"], default="rename",
+                   help="presets whose id you already have: keep both (default), replace yours, or skip")
+    p.add_argument("--board", choices=["append", "replace", "skip"], default="append",
+                   help="add the pads to your board (default), replace your board, or skip it")
+    p.add_argument("--dry-run", action="store_true", help="only show what is inside")
     sub.add_parser("levels", help="print mic and Voice Mix peak levels (dBFS)")
     p = sub.add_parser("subscribe", help="stream status changes as JSON lines")
     p.add_argument("--levels", action="store_true", help="also stream level meter events")
@@ -57,6 +69,12 @@ def main(argv=None):
             msg["on"] = a.state == "on"
         elif a.cmd == "mic":
             msg["source"] = a.source
+        elif a.cmd == "export":
+            pr = a.presets if a.presets in ("user", "none") else [x for x in a.presets.split(",") if x]
+            msg = {"cmd": "export", "path": os.path.abspath(a.file), "board": not a.no_board, "presets": pr}
+        elif a.cmd == "import":
+            msg = {"cmd": "inspect" if a.dry_run else "import", "path": os.path.abspath(a.file),
+                   "presets": a.presets, "board": a.board}
         elif a.cmd == "save":
             msg = {"cmd": "save-preset", "name": a.name, "preset": a.preset}
         elif a.cmd == "rename":
@@ -74,7 +92,7 @@ def main(argv=None):
                 ap.error("param needs an id and a value (or --reset)")
             else:
                 msg["id"], msg["value"] = a.id, a.value
-        r = ipc.request(msg)
+        r = ipc.request(msg, timeout=300 if msg["cmd"] in ("import", "export") else 5)
     except (OSError, KeyboardInterrupt) as e:
         print(f"vox-deck: app not running ({e})", file=sys.stderr)
         return 2
