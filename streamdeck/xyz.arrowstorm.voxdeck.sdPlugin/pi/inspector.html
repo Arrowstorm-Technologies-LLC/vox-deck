@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{font-family:sans-serif;background:#2d2d2d;color:#d8d8d8;padding:10px}
+label{display:block;margin:8px 0 3px;font-size:12px}
+input{width:100%;box-sizing:border-box;padding:6px;background:#1d1d1d;color:#eee;border:1px solid #555;border-radius:4px}
+small{color:#999}</style></head><body>
+<div id="clipbox"><label>Clip name or number</label><input id="clip"><small>as shown by <code>vox-deck clips</code></small></div>
+<div id="presetbox"><label>Preset id</label><input id="preset"><small>as shown by <code>vox-deck presets</code> (for example deep, radio)</small></div>
+<script>
+let ws, uuid, action, settings = {};
+function connectElgatoStreamDeckSocket(port, inUUID, registerEvent, info, actionInfo) {
+  uuid = inUUID;
+  const ai = JSON.parse(actionInfo);
+  action = ai.action;
+  settings = (ai.payload && ai.payload.settings) || {};
+  document.getElementById('clipbox').style.display = action.endsWith('.play') ? '' : 'none';
+  document.getElementById('presetbox').style.display = action.endsWith('.preset') ? '' : 'none';
+  document.getElementById('clip').value = settings.clip || '';
+  document.getElementById('preset').value = settings.preset || '';
+  ws = new WebSocket('ws://127.0.0.1:' + port);
+  ws.onopen = () => ws.send(JSON.stringify({event: registerEvent, uuid: inUUID}));
+}
+function save() {
+  settings.clip = document.getElementById('clip').value;
+  settings.preset = document.getElementById('preset').value;
+  ws.send(JSON.stringify({event: 'setSettings', context: uuid, payload: settings}));
+}
+document.getElementById('clip').oninput = save;
+document.getElementById('preset').oninput = save;
+</script></body></html>

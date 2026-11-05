@@ -1,0 +1,366 @@
+[
+ {
+  "id": "clean",
+  "name": "Clean",
+  "description": "Dry microphone, no effects",
+  "chain": []
+ },
+ {
+  "id": "denoise",
+  "name": "Denoise",
+  "description": "RNNoise noise suppression (classic DSP network, CPU only)",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "librnnoise_ladspa",
+    "label": "noise_suppressor_mono",
+    "control": {
+     "VAD Threshold (%)": 50.0,
+     "VAD Grace Period (ms)": 200.0,
+     "Retroactive VAD Grace (ms)": 0.0
+    }
+   }
+  ]
+ },
+ {
+  "id": "deep",
+  "name": "Deep",
+  "description": "Lower pitch",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "pitch_scale_1194",
+    "label": "pitchScaleHQ",
+    "control": {
+     "Pitch co-efficient": 0.75
+    }
+   }
+  ]
+ },
+ {
+  "id": "chipmunk",
+  "name": "Chipmunk",
+  "description": "Higher pitch",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "pitch_scale_1194",
+    "label": "pitchScaleHQ",
+    "control": {
+     "Pitch co-efficient": 1.6
+    }
+   }
+  ]
+ },
+ {
+  "id": "demon",
+  "name": "Demon",
+  "description": "Very low, gritty, with a hall",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "pitch_scale_1194",
+    "label": "pitchScaleHQ",
+    "control": {
+     "Pitch co-efficient": 0.55
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "valve_1209",
+    "label": "valve",
+    "control": {
+     "Distortion level": 0.55,
+     "Distortion character": 0.7
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "gverb_1216",
+    "label": "gverb",
+    "control": {
+     "Roomsize (m)": 30.0,
+     "Reverb time (s)": 2.5,
+     "Damping": 0.6,
+     "Input bandwidth": 0.5,
+     "Dry signal level (dB)": -2.0,
+     "Early reflection level (dB)": -14.0,
+     "Tail level (dB)": -16.0
+    }
+   }
+  ]
+ },
+ {
+  "id": "robot",
+  "name": "Robot",
+  "description": "Ring modulation plus flanger",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "ringmod_1188",
+    "label": "ringmod_1i1o1l",
+    "control": {
+     "Modulation depth (0=none, 1=AM, 2=RM)": 2.0,
+     "Frequency (Hz)": 45.0,
+     "Sine level": 1.0,
+     "Triangle level": 0.0,
+     "Sawtooth level": 0.0,
+     "Square level": 0.0
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "flanger_1191",
+    "label": "flanger",
+    "control": {
+     "Delay base (ms)": 4.0,
+     "Max slowdown (ms)": 3.0,
+     "LFO frequency (Hz)": 0.4,
+     "Feedback": 0.5
+    }
+   }
+  ],
+  "gain": 1.4
+ },
+ {
+  "id": "alien",
+  "name": "Alien",
+  "description": "Warbling AM pitch shift with chorus",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "am_pitchshift_1433",
+    "label": "amPitchshift",
+    "control": {
+     "Pitch shift": 1.8,
+     "Buffer size": 4.0
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "multivoice_chorus_1201",
+    "label": "multivoiceChorus",
+    "control": {
+     "Number of voices": 4.0,
+     "Delay base (ms)": 20.0,
+     "Voice separation (ms)": 1.0,
+     "Detune (%)": 3.0,
+     "LFO frequency (Hz)": 8.0,
+     "Output attenuation (dB)": -3.0
+    }
+   }
+  ]
+ },
+ {
+  "id": "radio",
+  "name": "Radio",
+  "description": "Band-limited and lightly overdriven",
+  "chain": [
+   {
+    "type": "builtin",
+    "label": "bq_highpass",
+    "control": {
+     "Freq": 450,
+     "Q": 0.8,
+     "Gain": 0
+    }
+   },
+   {
+    "type": "builtin",
+    "label": "bq_lowpass",
+    "control": {
+     "Freq": 3400,
+     "Q": 0.8,
+     "Gain": 0
+    }
+   },
+   {
+    "type": "builtin",
+    "label": "bq_peaking",
+    "control": {
+     "Freq": 1600,
+     "Q": 1.0,
+     "Gain": 6.0
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "foverdrive_1196",
+    "label": "foverdrive",
+    "control": {
+     "Drive level": 1.8
+    }
+   }
+  ],
+  "gain": 0.8
+ },
+ {
+  "id": "megaphone",
+  "name": "Megaphone",
+  "description": "Harsh narrow band with saturation",
+  "chain": [
+   {
+    "type": "builtin",
+    "label": "bq_highpass",
+    "control": {
+     "Freq": 700,
+     "Q": 0.9,
+     "Gain": 0
+    }
+   },
+   {
+    "type": "builtin",
+    "label": "bq_lowpass",
+    "control": {
+     "Freq": 3800,
+     "Q": 0.9,
+     "Gain": 0
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "valve_1209",
+    "label": "valve",
+    "control": {
+     "Distortion level": 0.8,
+     "Distortion character": 0.4
+    }
+   }
+  ],
+  "gain": 0.8
+ },
+ {
+  "id": "cave",
+  "name": "Cave",
+  "description": "Big room reverb",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "gverb_1216",
+    "label": "gverb",
+    "control": {
+     "Roomsize (m)": 90.0,
+     "Reverb time (s)": 6.0,
+     "Damping": 0.4,
+     "Input bandwidth": 0.6,
+     "Dry signal level (dB)": -4.0,
+     "Early reflection level (dB)": -10.0,
+     "Tail level (dB)": -9.0
+    }
+   }
+  ]
+ },
+ {
+  "id": "underwater",
+  "name": "Underwater",
+  "description": "Muffled and wobbling",
+  "chain": [
+   {
+    "type": "builtin",
+    "label": "bq_lowpass",
+    "control": {
+     "Freq": 900,
+     "Q": 0.9,
+     "Gain": 0
+    }
+   },
+   {
+    "type": "ladspa",
+    "plugin": "multivoice_chorus_1201",
+    "label": "multivoiceChorus",
+    "control": {
+     "Number of voices": 3.0,
+     "Delay base (ms)": 30.0,
+     "Voice separation (ms)": 1.5,
+     "Detune (%)": 4.0,
+     "LFO frequency (Hz)": 3.0,
+     "Output attenuation (dB)": -2.0
+    }
+   }
+  ],
+  "gain": 1.5
+ },
+ {
+  "id": "retro",
+  "name": "Retro 8-bit",
+  "description": "Bit crusher",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "decimator_1202",
+    "label": "decimator",
+    "control": {
+     "Bit depth": 6.0,
+     "Sample rate (Hz)": 0.25
+    }
+   },
+   {
+    "type": "builtin",
+    "label": "bq_lowpass",
+    "control": {
+     "Freq": 5000,
+     "Q": 0.7,
+     "Gain": 0
+    }
+   }
+  ]
+ },
+ {
+  "id": "echo",
+  "name": "Echo",
+  "description": "Tape echo",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "tape_delay_1211",
+    "label": "tapeDelay",
+    "control": {
+     "Tape speed (inches/sec, 1=normal)": 1.0,
+     "Dry level (dB)": 0.0,
+     "Tap 1 distance (inches)": 0.3,
+     "Tap 1 level (dB)": -8.0,
+     "Tap 2 distance (inches)": 0.6,
+     "Tap 2 level (dB)": -14.0,
+     "Tap 3 distance (inches)": 0.9,
+     "Tap 3 level (dB)": -20.0,
+     "Tap 4 distance (inches)": 1.2,
+     "Tap 4 level (dB)": -26.0
+    }
+   }
+  ]
+ },
+ {
+  "id": "plate",
+  "name": "Plate (caps)",
+  "description": "Plate reverb from the C* Audio Plugin Suite. Needs caps.",
+  "chain": [
+   {
+    "type": "ladspa",
+    "plugin": "caps",
+    "label": "Plate",
+    "control": {
+     "bandwidth": 0.5,
+     "tail": 0.5,
+     "damping": 0.25,
+     "blend": 0.3
+    }
+   }
+  ],
+  "extra": true
+ },
+ {
+  "id": "broadcast",
+  "name": "Broadcast (LSP)",
+  "description": "Compressor from LSP plugins. Needs lsp-plugins-lv2.",
+  "chain": [
+   {
+    "type": "lv2",
+    "plugin": "http://lsp-plug.in/plugins/lv2/compressor_mono",
+    "package": "lsp-plugins-lv2",
+    "in": "in",
+    "out": "out"
+   }
+  ],
+  "extra": true
+ }
+]

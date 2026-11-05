@@ -1,0 +1,107 @@
+{
+  "Name": "Vox Deck",
+  "Description": "Control the Vox Deck soundboard and voice changer",
+  "Author": "Arrowstorm Technologies",
+  "Version": "0.1.0",
+  "Icon": "icons/plugin",
+  "Category": "Vox Deck",
+  "CodePath": "plugin.py",
+  "CodePathLin": "plugin.py",
+  "CodePaths": {
+    "x86_64-unknown-linux-gnu": "plugin.py"
+  },
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Play clip",
+      "UUID": "xyz.arrowstorm.voxdeck.play",
+      "Icon": "icons/action",
+      "Tooltip": "Play a soundboard clip",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "icons/key_clip"
+        }
+      ],
+      "PropertyInspectorPath": "pi/inspector.html"
+    },
+    {
+      "Name": "Voice preset",
+      "UUID": "xyz.arrowstorm.voxdeck.preset",
+      "Icon": "icons/action",
+      "Tooltip": "Switch to a voice preset; lit while active",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "icons/key_preset"
+        },
+        {
+          "Image": "icons/key_preset_active"
+        }
+      ],
+      "PropertyInspectorPath": "pi/inspector.html"
+    },
+    {
+      "Name": "Effects on/off",
+      "UUID": "xyz.arrowstorm.voxdeck.toggle",
+      "Icon": "icons/action",
+      "Tooltip": "Toggle voice effects (bypass); shows state",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "icons/key_on"
+        },
+        {
+          "Image": "icons/key_off"
+        }
+      ]
+    },
+    {
+      "Name": "Mic mute",
+      "UUID": "xyz.arrowstorm.voxdeck.mute",
+      "Icon": "icons/action",
+      "Tooltip": "Mute the microphone path; shows state",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "icons/key_live"
+        },
+        {
+          "Image": "icons/key_muted"
+        }
+      ]
+    },
+    {
+      "Name": "Stop clips",
+      "UUID": "xyz.arrowstorm.voxdeck.stop",
+      "Icon": "icons/action",
+      "Tooltip": "Stop all playing clips",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true,
+      "States": [
+        {
+          "Image": "icons/key_stop"
+        }
+      ]
+    }
+  ]
+}

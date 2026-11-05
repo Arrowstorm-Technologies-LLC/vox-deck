@@ -1,0 +1,29 @@
+[Desktop Entry]
+Type=Application
+Name=Vox Deck
+Comment=Soundboard and real-time voice changer with a virtual microphone
+Exec=vox-deck-gui
+Icon=vox-deck
+Categories=AudioVideo;Audio;Mixer;
+StartupNotify=false
+Actions=Toggle;NextPreset;PrevPreset;StopAll;MuteMic;
+
+[Desktop Action Toggle]
+Name=Toggle voice effects
+Exec=vox-deck toggle
+
+[Desktop Action NextPreset]
+Name=Next voice preset
+Exec=vox-deck preset next
+
+[Desktop Action PrevPreset]
+Name=Previous voice preset
+Exec=vox-deck preset prev
+
+[Desktop Action StopAll]
+Name=Stop all clips
+Exec=vox-deck stop
+
+[Desktop Action MuteMic]
+Name=Toggle mic mute
+Exec=vox-deck mute

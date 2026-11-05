@@ -1,0 +1,136 @@
+# Vox Deck
+
+A small native Linux app (Python + PySide6) with one window that combines:
+
+- a **soundboard** grid,
+- **real-time voice changing** with classic DSP (no AI, no GPU, no Wine), and
+- a virtual microphone called **Voice Mix** that Discord, games and anything else can pick as their input.
+
+It also has a tray icon, global-hotkey actions for KDE, a control socket with a tiny `vox-deck` CLI, and a plugin for Stream Deck hardware through OpenDeck.
+
+![Vox Deck window](docs/preview.png)
+
+## How it works
+
+```
+ microphone ──> effect chain (filter-chain) ──┐
+                                              ├─> vox_mix (sink) ─> "Voice Mix" (source) ─> Discord / games
+ soundboard clips (pw-play streams) ──────────┘
+```
+
+Vox Deck needs PipeWire (with `pipewire-pulse` for apps that speak PulseAudio). At run time it starts two child `pipewire -c <generated config>` processes. Like PipeWire's own filter-chain service, they connect to the running PipeWire as clients. They create the virtual mic and the effect chain, and exit with the app.
+
+What it never does: restart or reconfigure PipeWire/WirePlumber, edit your PipeWire config files, or change your default sink or source. Quit the app and everything it created is gone.
+
+Switching presets swaps the effect chain (a brief gap, well under a second). "Effects OFF" bypasses the chain and passes your dry microphone. "Mic muted" stops the voice path while the soundboard keeps working.
+
+## Requirements
+
+- PipeWire 1.x with `pipewire-pulse`, `pipewire` and `pw-play` on PATH, `pactl`
+- Python 3.10+, PySide6, numpy
+
+Arch / CachyOS: `sudo pacman -S pyside6 python-numpy`
+
+## Install
+
+```
+git clone https://github.com/Arrowstorm-Technologies-LLC/vox-deck
+cd vox-deck
+./install.sh
+vox-deck-gui
+```
+
+`install.sh` puts two launchers in `~/.local/bin`, a desktop entry and icon in `~/.local/share`, and a systemd user unit. For autostart in the tray at login:
+
+```
+systemctl --user enable --now vox-deck.service
+```
+
+(Make sure `~/.local/bin` is on your PATH.)
+
+## Using it
+
+1. Open Vox Deck, pick your **Microphone** (any capture source, including a chain built by another tool).
+2. In Discord or your game, choose **Voice Mix** as the input device.
+3. Click a voice preset. The big **Effects** button bypasses all effects.
+4. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output.
+
+Settings, clips and your own presets live in `~/.config/vox-deck/`.
+
+### Presets
+
+Built in, using plugins that ship with common distro packages: Clean, Denoise (RNNoise), Deep, Chipmunk, Demon, Robot, Alien, Radio, Megaphone, Cave, Underwater, Retro 8-bit, Echo.
+
+The needed LADSPA plugins come from `swh-plugins` (pitch, ring modulation, reverb, chorus, valve, bit crusher, tape delay), `noise-suppression-for-voice` (Denoise) and PipeWire's builtin biquad filters. A preset whose plugins are missing is shown greyed out with the missing package in its tooltip, so installing more plugins lights up more presets automatically. Presets in the optional packages below are marked **untested**.
+
+Add your own: drop a JSON file in `~/.config/vox-deck/presets/` (a single preset object or a list). Format:
+
+```json
+{
+  "id": "my-voice", "name": "My Voice", "gain": 1.0,
+  "chain": [
+    {"type": "builtin", "label": "bq_highpass", "control": {"Freq": 120, "Q": 0.7, "Gain": 0}},
+    {"type": "ladspa", "plugin": "pitch_scale_1194", "label": "pitchScaleHQ",
+     "control": {"Pitch co-efficient": 0.9}},
+    {"type": "lv2", "plugin": "http://example.org/some-plugin", "in": "in", "out": "out"}
+  ]
+}
+```
+
+Chains are serial, mono, one audio input and one audio output per node (use `"in"`/`"out"` to name ports when the first ones are not right).
+
+### Optional packages (more presets, Stream Deck)
+
+For the extra plugin presets and the Stream Deck app:
+
+```
+sudo pacman -S opendeck lsp-plugins-lv2 swh-plugins caps cmt
+```
+
+(`swh-plugins` is needed for most built-in presets. `noise-suppression-for-voice` provides Denoise.) Note: the `ladspa-rubberband` plugin was not available on the development machine, so pitch shifting uses the swh pitch scaler.
+
+## Control socket and CLI
+
+The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object per line, one JSON reply per line.
+
+| Request | Effect |
+|---|---|
+| `{"cmd":"play","clip":"Chime"}` | play a clip by name or index |
+| `{"cmd":"preset","preset":"deep"}` | switch preset (`next` / `prev` work too) |
+| `{"cmd":"toggle"}` / `{"cmd":"toggle","on":true}` | effects on/off |
+| `{"cmd":"mute"}` | mic mute on/off |
+| `{"cmd":"mic","source":"<node name>"}` | choose the microphone |
+| `{"cmd":"stop"}` | stop all clips |
+| `{"cmd":"status"}`, `presets`, `clips`, `mics` | queries |
+| `{"cmd":"subscribe"}` | keep the connection open; status events are pushed as they change |
+
+CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck subscribe`, and so on (`vox-deck --help`).
+
+## Global hotkeys (KDE)
+
+The desktop entry has actions (toggle effects, next/previous preset, stop all clips, mic mute) that run the CLI. In System Settings, Keyboard, Shortcuts, use "Add Application", pick Vox Deck, and bind keys to its actions. Alternatively add Custom Shortcuts that run `vox-deck toggle` and friends. (Binding through the GUI has not been verified here.)
+
+## Stream Deck (OpenDeck)
+
+`streamdeck/xyz.arrowstorm.voxdeck.sdPlugin` is a plugin for [OpenDeck](https://github.com/nekename/OpenDeck) using the Elgato plugin protocol, pure Python standard library. Actions: **Play clip**, **Voice preset** (lit while active), **Effects on/off** (two states), **Mic mute** (two states), **Stop clips**. Keys follow the app live (setState, setImage, setTitle) through the `subscribe` socket command.
+
+```
+streamdeck/install-opendeck.sh   # then restart OpenDeck
+```
+
+In OpenDeck, drag the actions from the "Vox Deck" category onto keys. For Play clip type the clip name; for Voice preset type a preset id (`vox-deck presets`). The plugin loads and registers in OpenDeck 2.14.2; key behaviour is tested with a mock host (`tests/mock_streamdeck_host.py`) but not yet confirmed on real hardware.
+
+## Development
+
+```
+PYTHONPATH=src python -m voxdeck.app                       # run from the checkout
+QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m voxdeck.app --screenshot out.png
+PYTHONPATH=src python -m voxdeck.app --headless            # audio + socket only
+python tests/mock_streamdeck_host.py                       # needs a running app
+```
+
+To test without touching a real microphone, load a null sink (`pactl load-module module-null-sink sink_name=testbus`), play audio into it, and select `testbus.monitor` as the microphone.
+
+## License
+
+MIT. See `LICENSE`.
