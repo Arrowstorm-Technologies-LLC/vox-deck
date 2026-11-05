@@ -1,10 +1,11 @@
 """Vox Deck main window, tray icon and entry point."""
 import argparse
+import os
 import signal
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow,
@@ -53,6 +54,56 @@ def header(text):
     l = QLabel(text.upper())
     l.setObjectName("h")
     return l
+
+
+class LevelMeter(QWidget):
+    """Horizontal peak meter, -60..0 dBFS, with a short peak hold. Painted from values the
+    controller already has; no audio passes through the GUI."""
+    LO = -60.0
+
+    def __init__(self, label):
+        super().__init__()
+        self.label = label
+        self.db = None
+        self.hold, self.hold_t = self.LO, 0
+        self.setMinimumSize(200, 22)
+        self.setMaximumHeight(22)
+
+    def set_level(self, db, now_ms):
+        self.db = db
+        if db is not None and db >= self.hold:
+            self.hold, self.hold_t = db, now_ms
+        elif now_ms - self.hold_t > 900:
+            self.hold = max(self.LO, self.hold - 1.5)
+        self.update()
+
+    def frac(self, db):
+        return max(0.0, min(1.0, (db - self.LO) / -self.LO))
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        lw = 74
+        p.setPen(QColor("#8a90a0"))
+        p.drawText(0, 0, lw, self.height(), Qt.AlignmentFlag.AlignVCenter, self.label)
+        bx, bw, bh = lw, self.width() - lw - 58, self.height() - 8
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#232731"))
+        p.drawRoundedRect(bx, 4, bw, bh, 4, 4)
+        if self.db is not None:
+            f = self.frac(self.db)
+            col = "#2ea35f" if self.db < -12 else ("#d68910" if self.db < -3 else "#c0392b")
+            p.setBrush(QColor(col))
+            if f > 0:
+                p.drawRoundedRect(bx, 4, max(4, int(bw * f)), bh, 4, 4)
+            hx = bx + int(bw * self.frac(self.hold))
+            p.setBrush(QColor("#e6e8ec"))
+            if self.hold > self.LO:
+                p.drawRect(min(hx, bx + bw - 2), 4, 2, bh)
+        p.setPen(QColor("#d7dae0" if self.db is not None else "#5b6070"))
+        txt = "--" if self.db is None else ("-inf" if self.db <= self.LO else f"{self.db:.0f} dB")
+        p.drawText(bx + bw + 6, 0, 52, self.height(), Qt.AlignmentFlag.AlignVCenter, txt)
+        p.end()
 
 
 class Pad(QPushButton):
@@ -130,6 +181,18 @@ class Window(QMainWindow):
         self.status = QLabel()
         row.addWidget(self.status)
         v.addLayout(row)
+
+        mrow = QHBoxLayout()
+        self.m_mic = LevelMeter("Mic in")
+        self.m_out = LevelMeter("Voice Mix")
+        mrow.addWidget(self.m_mic, 1)
+        mrow.addSpacing(18)
+        mrow.addWidget(self.m_out, 1)
+        v.addLayout(mrow)
+        self.mtimer = QTimer(self)
+        self.mtimer.timeout.connect(self.poll_meters)
+        self.clock = QElapsedTimer()
+        self.clock.start()
 
         v.addWidget(header("Voice presets"))
         self.pgrid = QGridLayout()
@@ -242,6 +305,21 @@ class Window(QMainWindow):
         self.status.setText(("Virtual mic: Voice Mix" if ok else "Audio engine not running") +
                             (f"   playing {st['playing']}" if st["playing"] else ""))
 
+    def poll_meters(self):
+        lv, now = self.ctl.levels(), self.clock.elapsed()
+        self.m_mic.set_level(lv["mic"], now)
+        self.m_out.set_level(lv["out"], now)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.ctl.set_meter_window(True)
+        self.mtimer.start(40)
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self.mtimer.stop()
+        self.ctl.set_meter_window(False)
+
     def closeEvent(self, e):
         if QSystemTrayIcon.isSystemTrayAvailable():
             e.ignore()
@@ -257,6 +335,8 @@ def main(argv=None):
     ap.add_argument("--headless", action="store_true", help="no window or tray, audio and socket only")
     ap.add_argument("--screenshot", metavar="PNG", help="render the window to a PNG and exit (for testing)")
     a = ap.parse_args(argv)
+    if a.headless:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # no display needed
     app = QApplication(sys.argv[:1])
     app.setApplicationName("vox-deck")
     app.setDesktopFileName("vox-deck")
@@ -275,7 +355,7 @@ def main(argv=None):
     win = Window(ctl)
     if a.screenshot:
         win.show()
-        QTimer.singleShot(600, lambda: (win.grab().save(a.screenshot), app.quit()))
+        QTimer.singleShot(1500, lambda: (win.grab().save(a.screenshot), app.quit()))
         return app.exec()
     tray = QSystemTrayIcon(make_icon(), app)
     menu = QMenu()

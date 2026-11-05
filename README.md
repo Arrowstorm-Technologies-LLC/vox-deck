@@ -52,7 +52,7 @@ systemctl --user enable --now vox-deck.service
 
 1. Open Vox Deck, pick your **Microphone** (any capture source, including a chain built by another tool).
 2. In Discord or your game, choose **Voice Mix** as the input device.
-3. Click a voice preset. The big **Effects** button bypasses all effects.
+3. Click a voice preset. The big **Effects** button bypasses all effects. The two meters under the microphone picker show the peak level of your microphone (**Mic in**) and of what others hear (**Voice Mix**), so you can tell at a glance whether the mic is picked up and whether a preset is too loud or too quiet.
 4. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output.
 
 Settings, clips and your own presets live in `~/.config/vox-deck/`.
@@ -101,10 +101,14 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"mute"}` | mic mute on/off |
 | `{"cmd":"mic","source":"<node name>"}` | choose the microphone |
 | `{"cmd":"stop"}` | stop all clips |
-| `{"cmd":"status"}`, `presets`, `clips`, `mics` | queries |
+| `{"cmd":"status"}`, `presets`, `clips`, `mics` | queries (`status` also carries `levels`) |
+| `{"cmd":"levels"}` | peak levels in dBFS: `mic` (selected microphone) and `out` (Voice Mix); `null` while a meter is starting |
 | `{"cmd":"subscribe"}` | keep the connection open; status events are pushed as they change |
+| `{"cmd":"subscribe","levels":true}` | as above, plus `{"event":"levels","mic":-18.0,"out":-21.5}` about 10 times a second |
 
-CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck subscribe`, and so on (`vox-deck --help`).
+CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, and so on (`vox-deck --help`).
+
+The meters are cheap: they use PulseAudio-protocol peak-detect streams, so pipewire-pulse computes the peaks and the app receives about 25 numbers a second per meter instead of audio. They only run while the window is visible, a client is subscribed to levels, or for 10 seconds after a `levels`/`status` query.
 
 ## Global hotkeys (KDE)
 
@@ -126,6 +130,7 @@ In OpenDeck, drag the actions from the "Vox Deck" category onto keys. For Play c
 PYTHONPATH=src python -m voxdeck.app                       # run from the checkout
 QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m voxdeck.app --screenshot out.png
 PYTHONPATH=src python -m voxdeck.app --headless            # audio + socket only
+python tests/run_all.py                                    # unit tests (pytest works too)
 python tests/mock_streamdeck_host.py                       # needs a running app
 ```
 

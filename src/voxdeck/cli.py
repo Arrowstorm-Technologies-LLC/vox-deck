@@ -24,11 +24,13 @@ def main(argv=None):
     sub.add_parser("presets", help="list presets")
     sub.add_parser("clips", help="list clips")
     sub.add_parser("mics", help="list microphones")
-    sub.add_parser("subscribe", help="stream status changes as JSON lines")
+    sub.add_parser("levels", help="print mic and Voice Mix peak levels (dBFS)")
+    p = sub.add_parser("subscribe", help="stream status changes as JSON lines")
+    p.add_argument("--levels", action="store_true", help="also stream level meter events")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "subscribe":
-            for ev in ipc.subscribe():
+            for ev in ipc.subscribe(levels=a.levels):
                 print(json.dumps(ev), flush=True)
             return 0
         msg = {"cmd": a.cmd}

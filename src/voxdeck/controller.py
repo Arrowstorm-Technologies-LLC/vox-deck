@@ -1,12 +1,14 @@
 """Application core: state, preset switching, board and the control socket server."""
 import json
 import os
+import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer
 
 from . import audio, effects
 from .board import Board
+from .meter import PeakMeter
 from .paths import config_dir, socket_path
 
 DEFAULTS = {"mic": "", "preset": "clean", "enabled": True, "muted": False,
@@ -41,6 +43,13 @@ class Controller(QObject):
         self.timer.timeout.connect(self._tick)
         self.timer.start(1000)
         self._last = None
+        # level meters run only while someone looks: the window, a levels subscriber or a recent query
+        self.meter = PeakMeter()
+        self.meter_window = False
+        self.meter_lease = 0.0
+        self.level_subs = []
+        self.level_timer = QTimer(self)
+        self.level_timer.timeout.connect(self._push_levels)
 
     # -- state
     def start(self):
@@ -53,6 +62,7 @@ class Controller(QObject):
     def apply_voice(self):
         pr = self.presets[self.s["preset"] if self.s["enabled"] else "clean"]
         self.engine.set_voice(None if self.s["muted"] else pr, self.s["mic"])
+        self.update_meters()
         self.save()
         self._emit()
 
@@ -105,6 +115,36 @@ class Controller(QObject):
                 "playing": self.board.reap(), "engine": self.engine.healthy(),
                 "source": audio.MIX_DESC, "error": self.engine.last_error}
 
+    # -- level meters
+    def meters_wanted(self) -> bool:
+        return self.meter_window or bool(self.level_subs) or time.monotonic() < self.meter_lease
+
+    def update_meters(self):
+        if self.meters_wanted():
+            self.meter.watch("mic", self.s["mic"])
+            self.meter.watch("out", audio.MIX_SOURCE if self.engine.running(self.engine.mix) else "")
+        elif self.meter.want:
+            self.meter.unwatch_all()
+
+    def set_meter_window(self, on: bool):
+        self.meter_window = bool(on)
+        self.update_meters()
+
+    def levels(self) -> dict:
+        """Peak levels in dBFS: mic = selected microphone, out = Voice Mix. None = not metering."""
+        return {"mic": self.meter.level("mic"), "out": self.meter.level("out")}
+
+    def _push_levels(self):
+        self.level_subs = [c for c in self.level_subs
+                           if c.state() == c.LocalSocketState.ConnectedState]
+        if not self.level_subs:
+            self.level_timer.stop()
+            self.update_meters()
+            return
+        line = (json.dumps({"event": "levels", **self.levels()}) + "\n").encode()
+        for c in self.level_subs:
+            c.write(line)
+
     # -- housekeeping
     def _tick(self):
         h = self.engine.healthy()
@@ -112,6 +152,7 @@ class Controller(QObject):
             self.engine.start_mix()
         if not h["voice"] and not self.s["muted"]:
             self.apply_voice()
+        self.update_meters()
         self._emit(only_if_changed=True)
 
     def _emit(self, only_if_changed=False):
@@ -128,6 +169,7 @@ class Controller(QObject):
                 c.write(line)
 
     def shutdown(self):
+        self.meter.unwatch_all()
         self.board.stop_all()
         self.engine.stop()
         self.server.close()
@@ -135,6 +177,11 @@ class Controller(QObject):
             os.unlink(socket_path())
         except OSError:
             pass
+
+    def _lease_meters(self, seconds=10.0):
+        """A one-shot level query keeps the meters running for a while so the next one has data."""
+        self.meter_lease = time.monotonic() + seconds
+        self.update_meters()
 
     # -- socket
     def _accept(self):
@@ -166,7 +213,11 @@ class Controller(QObject):
         elif cmd == "stop":
             self.stop_all()
         elif cmd == "status":
-            return self.status()
+            self._lease_meters()
+            return {**self.status(), "levels": self.levels()}
+        elif cmd == "levels":
+            self._lease_meters()
+            return {"ok": True, **self.levels()}
         elif cmd == "presets":
             return {"ok": True, "presets": [
                 {"id": k, "name": p["name"], "available": p["available"], "missing": p["missing"],
@@ -178,6 +229,11 @@ class Controller(QObject):
         elif cmd == "subscribe":
             if conn is not None:
                 self.subs.append(conn)
+                if m.get("levels"):
+                    self.level_subs.append(conn)
+                    self.update_meters()
+                    if not self.level_timer.isActive():
+                        self.level_timer.start(100)
             return {"event": "status", **self.status()}
         else:
             return {"ok": False, "error": f"unknown command {cmd!r}"}
