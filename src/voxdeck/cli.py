@@ -20,6 +20,9 @@ def main(argv=None):
     p.add_argument("state", nargs="?", choices=["on", "off"])
     p = sub.add_parser("mic", help="select the microphone (source node name)")
     p.add_argument("source")
+    p = sub.add_parser("hear", help="hear your own processed voice in the headset (no argument = show state)")
+    p.add_argument("state", nargs="?", choices=["on", "off", "toggle"])
+    p.add_argument("--volume", type=float, metavar="PERCENT", help="monitor volume, 0 to 100")
     sub.add_parser("stop", help="stop all playing clips")
     sub.add_parser("status", help="print status as JSON")
     sub.add_parser("presets", help="list presets")
@@ -69,6 +72,14 @@ def main(argv=None):
             msg["on"] = a.state == "on"
         elif a.cmd == "mic":
             msg["source"] = a.source
+        elif a.cmd == "hear":
+            msg = {"cmd": "voice-monitor"}
+            if a.state == "toggle":
+                msg["toggle"] = True
+            elif a.state:
+                msg["on"] = a.state == "on"
+            if a.volume is not None:
+                msg["volume"] = a.volume / 100
         elif a.cmd == "export":
             pr = a.presets if a.presets in ("user", "none") else [x for x in a.presets.split(",") if x]
             msg = {"cmd": "export", "path": os.path.abspath(a.file), "board": not a.no_board, "presets": pr}
@@ -96,7 +107,7 @@ def main(argv=None):
     except (OSError, KeyboardInterrupt) as e:
         print(f"vox-deck: app not running ({e})", file=sys.stderr)
         return 2
-    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "param", "save", "rename", "delete") else 1))
+    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "hear", "param", "save", "rename", "delete") else 1))
     return 0 if r.get("ok", True) else 1
 
 

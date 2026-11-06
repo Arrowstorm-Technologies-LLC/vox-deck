@@ -90,6 +90,8 @@ def test_engine_live_update_without_respawn():
     e = audio.Engine.__new__(audio.Engine)
     e.voice, e.voice_key, e.voice_ctl, e.pending = _Running(), None, {}, {}
     e.voice_node, e.inflight, e.live_updates, e.last_error = None, None, 0, ""
+    e.mon, e.mon_key, e.mon_vol, e.mon_sent, e.mon_linked, e.mon_node, e.mon_inflight = \
+        None, None, 0.0, 0.0, None, None, None
     deep = BUILTIN["deep"]
     e.voice_key = (effects.structure(deep), "mic")
     e.voice_ctl = effects.control_map(deep)

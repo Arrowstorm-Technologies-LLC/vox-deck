@@ -12,7 +12,8 @@ from .meter import PeakMeter
 from .paths import config_dir, socket_path
 
 DEFAULTS = {"mic": "", "preset": "clean", "enabled": True, "muted": False,
-            "board_volume": 0.8, "monitor": False, "monitor_target": "", "tuning": {}}
+            "board_volume": 0.8, "monitor": False, "monitor_target": "", "tuning": {},
+            "voice_monitor": False, "voice_monitor_volume": 0.7}
 
 
 class Controller(QObject):
@@ -75,6 +76,7 @@ class Controller(QObject):
     def apply_voice(self, save=True):
         pid = self.s["preset"] if self.s["enabled"] else "clean"
         self.engine.set_voice(None if self.s["muted"] else self.effective(pid), self.s["mic"])
+        self.apply_monitor(save=False, emit=False)
         if self.engine.busy() and not self.flush_timer.isActive():
             self.flush_timer.start(30)
         self.update_meters()
@@ -83,6 +85,27 @@ class Controller(QObject):
         else:
             self.save_timer.start(800)
         self._emit()
+
+    def apply_monitor(self, save=True, emit=True):
+        """Start/stop/update the voice monitor child from settings (it never touches the voice child)."""
+        self.engine.set_monitor(self.s["voice_monitor"], self.s["monitor_target"], self.s["voice_monitor_volume"])
+        if self.engine.busy() and not self.flush_timer.isActive():
+            self.flush_timer.start(30)
+        if save:
+            self.save()
+        if emit:
+            self._emit()
+
+    def set_voice_monitor(self, on=None):
+        self.s["voice_monitor"] = (not self.s["voice_monitor"]) if on is None else bool(on)
+        self.apply_monitor()
+
+    def set_voice_monitor_volume(self, v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+            raise ValueError("volume must be a number from 0 to 1")
+        self.s["voice_monitor_volume"] = max(0.0, min(1.0, float(v)))
+        self.apply_monitor(save=False)
+        self.save_timer.start(800)
 
     def _flush(self):
         self.engine.flush()
@@ -208,6 +231,8 @@ class Controller(QObject):
     def set_opt(self, key, value):
         self.s[key] = value
         self.save()
+        if key == "monitor_target":
+            self.apply_monitor()
         self._emit()
 
     def play(self, ref) -> bool:
@@ -227,7 +252,9 @@ class Controller(QObject):
         p = self.presets[self.s["preset"]]
         return {"ok": True, "enabled": self.s["enabled"], "muted": self.s["muted"],
                 "preset": p["id"], "preset_name": p["name"], "mic": self.s["mic"],
-                "monitor": self.s["monitor"], "board_volume": self.s["board_volume"],
+                "monitor": self.s["monitor"], "voice_monitor": self.s["voice_monitor"],
+                "voice_monitor_volume": self.s["voice_monitor_volume"],
+                "board_volume": self.s["board_volume"],
                 "playing": self.board.reap(), "engine": self.engine.healthy(),
                 "source": audio.MIX_DESC, "error": self.engine.last_error,
                 "tuned": bool(self.s["tuning"].get(p["id"]))}
@@ -269,6 +296,8 @@ class Controller(QObject):
             self.engine.start_mix()
         if not h["voice"] and not self.s["muted"]:
             self.apply_voice()
+        elif self.s["voice_monitor"] and not self.engine.running(self.engine.mon):
+            self.apply_monitor()
         self.update_meters()
         self._emit(only_if_changed=True)
 
@@ -334,6 +363,13 @@ class Controller(QObject):
             self.set_enabled(m.get("on"))
         elif cmd == "mute":
             self.set_muted(m.get("on"))
+        elif cmd == "voice-monitor":
+            if "volume" in m:
+                self.set_voice_monitor_volume(m["volume"])
+            if "on" in m:
+                self.set_voice_monitor(m["on"])
+            elif m.get("toggle"):
+                self.set_voice_monitor()
         elif cmd == "mic":
             self.set_mic(m.get("source", ""))
         elif cmd == "stop":

@@ -24,6 +24,10 @@ What it never does: restart or reconfigure PipeWire/WirePlumber, edit your PipeW
 
 Tuning a preset changes its controls live: the new values are sent to the running chain with `pw-cli set-param` (PipeWire's runtime control of filter-chain parameters), so there is no new process and no audio gap. Switching between presets that use the same plugins (Deep and Chipmunk, or a preset and your saved variants of it) is live too. Switching to a preset with different plugins swaps the effect chain, which leaves a gap of a few milliseconds. "Effects OFF" bypasses the chain and passes your dry microphone. "Mic muted" stops the voice path while the soundboard keeps working.
 
+### Hearing yourself
+
+"Hear my voice" runs a third small child (`vox_monitor_in` -> your default output, or `monitor_target` from `settings.json` if set). It is linked to the output of the voice chain only, so clips are never heard twice when "Hear clips myself" is also on, and switching it on or off never restarts or interrupts the voice chain. The link is made again by itself when the voice chain is replaced (new plugins or a new mic). It follows Effects off (you hear your dry mic) and Mic muted (silence). There is no deliberate delay or buffer: same 48 kHz and 512-sample quantum as the voice chain, no resampling. Keep your microphone from picking up the headset, otherwise you get feedback.
+
 ## Requirements
 
 - PipeWire 1.x with `pipewire-pulse`, `pipewire` and `pw-play` on PATH, `pactl`
@@ -54,7 +58,7 @@ systemctl --user enable --now vox-deck.service
 2. In Discord or your game, choose **Voice Mix** as the input device.
 3. Click a voice preset. The big **Effects** button bypasses all effects. The two meters under the microphone picker show the peak level of your microphone (**Mic in**) and of what others hear (**Voice Mix**), so you can tell at a glance whether the mic is picked up and whether a preset is too loud or too quiet.
 4. Under **Tune**, the sliders adjust the selected preset while you talk: its key controls (pitch, reverb level, ring frequency, cut-offs and so on), an **Effect mix** (wet/dry) on presets where blending in the dry voice makes sense, and **Output gain** on every preset. Changes are kept per preset; **Reset** goes back to the preset's own values. **Save as preset...** keeps the current settings as a preset of your own: it appears after the built-ins (blue outline), and right-clicking it lets you rename or delete it. Built-in presets are read-only.
-5. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output.
+5. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output. Tick **Hear my voice** to hear your own processed voice live (after the preset and your tuning), with its own volume slider; see "Hearing yourself" below.
 
 Settings, clips and your own presets live in `~/.config/vox-deck/`.
 
@@ -122,6 +126,7 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"preset","preset":"deep"}` | switch preset (`next` / `prev` work too) |
 | `{"cmd":"toggle"}` / `{"cmd":"toggle","on":true}` | effects on/off |
 | `{"cmd":"mute"}` | mic mute on/off |
+| `{"cmd":"voice-monitor","on":true,"volume":0.7}` | hear your own processed voice: `on` true/false (or `"toggle":true`), `volume` 0 to 1; both optional, with neither it just returns the state. `status` and `subscribe` events carry `voice_monitor` and `voice_monitor_volume` |
 | `{"cmd":"mic","source":"<node name>"}` | choose the microphone |
 | `{"cmd":"stop"}` | stop all clips |
 | `{"cmd":"status"}`, `presets`, `clips`, `mics` | queries (`status` also carries `levels`) |
@@ -138,7 +143,7 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"subscribe"}` | keep the connection open; status events are pushed as they change |
 | `{"cmd":"subscribe","levels":true}` | as above, plus `{"event":"levels","mic":-18.0,"out":-21.5}` about 10 times a second |
 
-CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, `vox-deck export board.voxdeck`, `vox-deck import --dry-run board.voxdeck`, `vox-deck import board.voxdeck --presets skip --board replace`, and so on (`vox-deck --help`).
+CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck hear on --volume 60`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, `vox-deck export board.voxdeck`, `vox-deck import --dry-run board.voxdeck`, `vox-deck import board.voxdeck --presets skip --board replace`, and so on (`vox-deck --help`).
 
 The meters are cheap: they use PulseAudio-protocol peak-detect streams, so pipewire-pulse computes the peaks and the app receives about 25 numbers a second per meter instead of audio. They only run while the window is visible, a client is subscribed to levels, or for 10 seconds after a `levels`/`status` query.
 

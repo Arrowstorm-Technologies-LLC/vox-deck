@@ -20,9 +20,16 @@ from pathlib import Path
 from . import effects
 from .paths import runtime_dir
 
-MIX_SINK = "vox_mix"
-MIX_SOURCE = "voice_mix"
+# Node names. VOXDECK_NODE_PREFIX lets a test instance run beside a real one without sharing nodes.
+PREFIX = os.environ.get("VOXDECK_NODE_PREFIX", "vox")
+MIX_SINK = f"{PREFIX}_mix"
+MIX_SOURCE = "voice_mix" if PREFIX == "vox" else f"{PREFIX}_voice_mix"
 MIX_DESC = "Voice Mix"
+VOICE_IN = f"{PREFIX}_voice_in"
+VOICE_OUT = f"{PREFIX}_voice_out"
+MON_IN = f"{PREFIX}_monitor_in"
+MON_OUT = f"{PREFIX}_monitor_out"
+MON_GAIN = "monvol:Mult"       # control name of the monitor's volume node
 
 HEADER = """context.properties = { log.level = 1 }
 context.spa-libs = {
@@ -92,7 +99,7 @@ def voice_conf(preset: dict, mic: str) -> str:
         node.description = "Vox Deck voice effects"
         filter.graph = {graph}
         capture.props = {{
-          node.name = "vox_voice_in"
+          node.name = "{VOICE_IN}"
           target.object = {json.dumps(mic)}
           node.autoconnect = true
           node.dont-fallback = true
@@ -105,7 +112,7 @@ def voice_conf(preset: dict, mic: str) -> str:
           {props}
         }}
         playback.props = {{
-          node.name = "vox_voice_out"
+          node.name = "{VOICE_OUT}"
           target.object = "{MIX_SINK}"
           node.autoconnect = true
           node.dont-fallback = true
@@ -115,6 +122,51 @@ def voice_conf(preset: dict, mic: str) -> str:
           audio.channels = 1
           audio.position = [ MONO ]
           node.latency = 512/48000
+        }}
+      }}
+    }}
+]
+"""
+
+
+def monitor_conf(target: str, volume: float) -> str:
+    """Small child that plays the processed voice to `target` (empty = default output).
+
+    Same 48 kHz mono and 512-sample quantum as the voice chain, no resampling, no delay line.
+    Its input is linked to the voice chain's output by Engine (autoconnect is off so it never
+    grabs a microphone). One `linear` node carries the monitor volume.
+    """
+    tgt = (f"target.object = {json.dumps(target)}\n          node.dont-fallback = true"
+           if target else "")
+    return HEADER + f"""    {{ name = libpipewire-module-filter-chain
+      args = {{
+        node.description = "Vox Deck voice monitor"
+        filter.graph = {{
+          nodes = [
+            {{ type = builtin name = monvol label = linear control = {{ "Mult" = {float(volume)!r} "Add" = 0.0 }} }}
+          ]
+          inputs  = [ "monvol:In" ]
+          outputs = [ "monvol:Out" ]
+        }}
+        capture.props = {{
+          node.name = "{MON_IN}"
+          node.autoconnect = false
+          node.passive = true
+          audio.rate = 48000
+          audio.channels = 1
+          audio.position = [ MONO ]
+          node.latency = 512/48000
+        }}
+        playback.props = {{
+          node.name = "{MON_OUT}"
+          node.autoconnect = true
+          node.dont-reconnect = true
+          state.restore-target = false
+          audio.rate = 48000
+          audio.channels = 1
+          audio.position = [ MONO ]
+          node.latency = 512/48000
+          {tgt}
         }}
       }}
     }}
@@ -160,6 +212,13 @@ class Engine:
         self.inflight = None        # (pw-cli process, values) of the update being sent
         self.live_updates = 0       # count of live control updates (for tests / status)
         self.last_error = ""
+        self.mon = None             # voice monitor child (separate from the voice child)
+        self.mon_key = None         # target the monitor child was started for
+        self.mon_vol = 0.0          # volume the child has / wants
+        self.mon_sent = 0.0
+        self.mon_linked = None      # (voice pid, monitor pid) the link was made for
+        self.mon_node = None
+        self.mon_inflight = None
         self.kill_stale()
 
     # -- process helpers
@@ -242,8 +301,13 @@ class Engine:
             self.inflight = None
 
     def find_voice_node(self):
-        """Id of our vox_voice_in node (owned by our voice child), or None if not registered yet."""
-        if not self.running(self.voice):
+        """Id of our voice-in node (owned by our voice child), or None if not registered yet."""
+        return self.find_node(VOICE_IN, self.voice)
+
+    @staticmethod
+    def find_node(name, proc):
+        """Id of node `name` owned by our child `proc`, or None if it is not registered yet."""
+        if not Engine.running(proc):
             return None
         try:
             objs = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout)
@@ -254,12 +318,17 @@ class Engine:
         for o in objs:
             if o.get("type", "").endswith("Node") and o.get("info"):
                 p = o["info"].get("props", {})
-                if p.get("node.name") == "vox_voice_in" and \
-                        str(clients.get(p.get("client.id"))) == str(self.voice.pid):
+                if p.get("node.name") == name and \
+                        str(clients.get(p.get("client.id"))) == str(proc.pid):
                     return o["id"]
         return None
 
     def flush(self) -> bool:
+        """Push pending live updates (voice controls and monitor link/volume). False = call again."""
+        a = self._flush_voice()
+        return self.sync_monitor() and a
+
+    def _flush_voice(self) -> bool:
         """Send pending control values to the running chain. False = not done yet (call again).
 
         One short-lived `pw-cli set-param` per batch, at most one in flight; values that arrive
@@ -298,13 +367,91 @@ class Engine:
         self.live_updates += 1
         return False
 
+    # -- voice monitor: processed voice -> headset, own child so the voice chain is never touched
+    def set_monitor(self, on: bool, target: str = "", volume: float = 0.7):
+        """Hear the processed voice. The child only restarts when the target changes; volume is live."""
+        volume = max(0.0, min(1.0, float(volume)))
+        if not on:
+            self._stop_monitor()
+            return
+        if self.running(self.mon) and self.mon_key == target:
+            self.mon_vol = volume
+        else:
+            self._stop_monitor()
+            try:
+                self.mon = self._spawn("monitor.conf", monitor_conf(target, volume))
+                self.mon_key, self.mon_vol, self.mon_sent = target, volume, volume
+            except Exception as e:  # noqa: BLE001
+                self.mon = None
+                self.last_error = str(e)
+        self.sync_monitor()
+
+    def _stop_monitor(self):
+        self._stop(self.mon)
+        self.mon, self.mon_key, self.mon_linked, self.mon_node = None, None, None, None
+        if self.mon_inflight:
+            self.mon_inflight.wait()
+            self.mon_inflight = None
+
+    @staticmethod
+    def _ports(flag, prefix):
+        try:
+            out = subprocess.run(["pw-link", flag], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return [ln.strip() for ln in out.splitlines() if ln.strip().startswith(prefix + ":")]
+
+    def monitor_wanted(self) -> bool:
+        return self.running(self.mon) and self.running(self.voice)
+
+    def sync_monitor(self) -> bool:
+        """Link the voice output to the monitor input and push a changed volume. False = call again.
+
+        The link belongs to the voice child, so it is made again whenever either child is new.
+        """
+        if self.mon_inflight and self.mon_inflight.poll() is None:
+            return False
+        self.mon_inflight = None
+        if not self.monitor_wanted():
+            return True
+        pair = (self.voice.pid, self.mon.pid)
+        if self.mon_linked != pair:
+            src, dst = self._ports("-o", VOICE_OUT), self._ports("-i", MON_IN)
+            if not src or not dst:
+                return False
+            r = subprocess.run(["pw-link", src[0], dst[0]], capture_output=True, text=True)
+            if r.returncode != 0 and "exists" not in r.stderr:
+                return False
+            self.mon_linked = pair
+        if abs(self.mon_vol - self.mon_sent) > 1e-9:
+            if self.mon_node is None:
+                self.mon_node = self.find_node(MON_IN, self.mon)
+                if self.mon_node is None:
+                    return False
+            try:
+                self.mon_inflight = subprocess.Popen(
+                    ["pw-cli", "set-param", str(self.mon_node), "Props",
+                     f"{{ params = [ {json.dumps(MON_GAIN)} {float(self.mon_vol)!r} ] }}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_pdeathsig)
+            except OSError:
+                return False
+            self.mon_sent = self.mon_vol
+            return False
+        return True
+
+    def monitor_busy(self) -> bool:
+        return self.monitor_wanted() and (self.mon_linked != (self.voice.pid, self.mon.pid)
+                                          or abs(self.mon_vol - self.mon_sent) > 1e-9
+                                          or self.mon_inflight is not None)
+
     def busy(self) -> bool:
-        return bool(self.pending or self.inflight)
+        return bool(self.pending or self.inflight) or self.monitor_busy()
 
     def healthy(self) -> dict:
         return {"mix": self.running(self.mix), "voice": self.running(self.voice)}
 
     def stop(self):
+        self._stop_monitor()
         self._stop_voice()
         self._stop(self.mix)
         self.mix = None

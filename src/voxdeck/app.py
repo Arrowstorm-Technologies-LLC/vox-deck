@@ -389,6 +389,15 @@ class Window(QMainWindow):
         self.monitor = QCheckBox("Hear clips myself")
         self.monitor.toggled.connect(lambda x: ctl.set_opt("monitor", x))
         bot.addWidget(self.monitor)
+        self.vmon = QCheckBox("Hear my voice")
+        self.vmon.toggled.connect(ctl.set_voice_monitor)
+        bot.addWidget(self.vmon)
+        self.vmvol = QSlider(Qt.Orientation.Horizontal)
+        self.vmvol.setRange(0, 100)
+        self.vmvol.setFixedWidth(90)
+        self.vmvol.setToolTip("Monitor volume")
+        self.vmvol.valueChanged.connect(lambda x: ctl.set_voice_monitor_volume(x / 100))
+        bot.addWidget(self.vmvol)
         bot.addStretch()
         stop = QPushButton("Stop all")
         stop.clicked.connect(ctl.stop_all)
@@ -459,6 +468,11 @@ class Window(QMainWindow):
         self.monitor.blockSignals(True)
         self.monitor.setChecked(st["monitor"])
         self.monitor.blockSignals(False)
+        for w, f in ((self.vmon, lambda: self.vmon.setChecked(st["voice_monitor"])),
+                     (self.vmvol, lambda: self.vmvol.setValue(round(st["voice_monitor_volume"] * 100)))):
+            w.blockSignals(True)
+            f()
+            w.blockSignals(False)
         self.refresh_tune()
         ok = st["engine"]["mix"] and (st["muted"] or st["engine"]["voice"])
         self.status.setText(("Virtual mic: Voice Mix" if ok else "Audio engine not running") +
