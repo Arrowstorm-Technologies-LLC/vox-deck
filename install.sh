@@ -14,7 +14,10 @@ PYTHONPATH="$root/src\${PYTHONPATH:+:\$PYTHONPATH}" exec python3 -m $mod "\$@"
 EOF
   chmod +x "$bin/$name"
 done
-cp "$root/desktop/vox-deck.desktop" "$HOME/.local/share/applications/"
+# Plasma's session PATH does not include ~/.local/bin, so the installed entry
+# gets absolute launcher paths (the repo template keeps bare names).
+sed -e "s|^Exec=vox-deck|Exec=$bin/vox-deck|" "$root/desktop/vox-deck.desktop" \
+  > "$HOME/.local/share/applications/vox-deck.desktop"
 cp "$root/desktop/vox-deck.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/"
 cp "$root/systemd/vox-deck.service" "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload 2>/dev/null || true
