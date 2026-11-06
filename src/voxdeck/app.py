@@ -7,10 +7,11 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QElapsedTimer, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QColorDialog, QComboBox, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMainWindow,
-                               QMenu, QMessageBox, QPushButton, QRadioButton, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QMenu, QMessageBox, QPushButton, QRadioButton, QSlider, QSystemTrayIcon, QToolTip,
+                               QVBoxLayout, QWidget)
 
 from . import audio, bundle
 from .board import COLORS
@@ -35,6 +36,9 @@ QPushButton#power:checked { background: #1f7a45; border-color: #2ea35f; color: w
 QPushButton#mute:checked { background: #8a2a2a; border-color: #b33a3a; color: white; }
 QPushButton#pad { border: none; border-radius: 10px; font-size: 14px; font-weight: bold; color: white; }
 QPushButton#pad:pressed { padding-top: 9px; }
+QSlider#padvol::sub-page:horizontal { background: #7f869a; border-radius: 2px; }
+QSlider#padvol::sub-page:horizontal:hover { background: #5865f2; }
+QSlider#padvol::handle:horizontal { background: #cfd3dc; width: 10px; margin: -4px 0; border-radius: 5px; }
 QPushButton#add { background: #1a1d24; border: 2px dashed #353a48; color: #6d7385; font-size: 24px; border-radius: 10px; }
 QCheckBox, QRadioButton { color: #d7dae0; spacing: 8px; }
 QRadioButton::indicator { width: 12px; height: 12px; border-radius: 8px; border: 2px solid #5b6070; background: #15171c; }
@@ -273,6 +277,44 @@ class Pad(QPushButton):
         self.win.rebuild_board()
 
 
+class PadCell(QWidget):
+    """A pad with its volume slider underneath (100 % = the clip as recorded; up to 200 %)."""
+    MAXPCT = 200
+
+    def __init__(self, win, idx, clip):
+        super().__init__()
+        self.win, self.idx = win, idx
+        self.pad = Pad(win, idx, clip)
+        self.vol = QSlider(Qt.Orientation.Horizontal)
+        self.vol.setObjectName("padvol")
+        self.vol.setRange(0, self.MAXPCT)
+        self.vol.setFixedHeight(14)
+        self.set_gain(clip.get("gain", 1.0))
+        self.vol.valueChanged.connect(self._moved)
+        self.vol.setMinimumWidth(40)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(3)
+        v.addWidget(self.pad, 1)
+        v.addWidget(self.vol)
+        win.ctl.clip_gain_changed.connect(self._external)
+
+    def set_gain(self, gain):
+        self.vol.blockSignals(True)
+        self.vol.setValue(round(min(self.MAXPCT, max(0.0, float(gain) * 100))))
+        self.vol.blockSignals(False)
+        self.vol.setToolTip(f"Volume {round(float(gain) * 100)} %")
+
+    def _moved(self, pct):
+        self.vol.setToolTip(f"Volume {pct} %")
+        QToolTip.showText(QCursor.pos(), f"{pct} %", self.vol)
+        self.win.ctl.set_clip_gain(self.idx, pct / 100, from_ui=True)
+
+    def _external(self, idx, gain):
+        if idx == self.idx:
+            self.set_gain(gain)
+
+
 class Window(QMainWindow):
     COLS = 5
 
@@ -373,7 +415,7 @@ class Window(QMainWindow):
         line.setObjectName("line")
         line.setFrameShape(QFrame.Shape.HLine)
         v.addWidget(line)
-        v.addWidget(header("Soundboard  (drop audio files here, right-click a pad to edit)"))
+        v.addWidget(header("Soundboard  (drop audio files here, right-click a pad to edit, slider = pad volume)"))
         self.bgrid = QGridLayout()
         self.bgrid.setSpacing(8)
         v.addLayout(self.bgrid)
@@ -428,11 +470,11 @@ class Window(QMainWindow):
         while self.bgrid.count():
             self.bgrid.takeAt(0).widget().deleteLater()
         for i, c in enumerate(self.ctl.board.clips):
-            self.bgrid.addWidget(Pad(self, i, c), i // self.COLS, i % self.COLS)
+            self.bgrid.addWidget(PadCell(self, i, c), i // self.COLS, i % self.COLS)
         n = len(self.ctl.board.clips)
         add = QPushButton("+")
         add.setObjectName("add")
-        add.setMinimumSize(110, 80)
+        add.setMinimumSize(110, 97)
         add.clicked.connect(self.add_clips)
         self.bgrid.addWidget(add, n // self.COLS, n % self.COLS)
 

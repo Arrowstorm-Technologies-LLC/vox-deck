@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer
 
 from . import audio, bundle, effects
-from .board import Board
+from .board import Board, clamp_gain
 from .meter import PeakMeter
 from .paths import config_dir, socket_path
 
@@ -20,6 +20,7 @@ class Controller(QObject):
     changed = Signal()
     presets_changed = Signal()
     board_changed = Signal()
+    clip_gain_changed = Signal(int, float)   # pad index, new gain (keeps sliders in step)
 
     def __init__(self):
         super().__init__()
@@ -51,6 +52,14 @@ class Controller(QObject):
         self.save_timer = QTimer(self)          # slider drags save once they settle
         self.save_timer.setSingleShot(True)
         self.save_timer.timeout.connect(self.save)
+        self.board_save_timer = QTimer(self)    # pad slider drags write board.json once they settle
+        self.board_save_timer.setSingleShot(True)
+        self.board_save_timer.setInterval(400)
+        self.board_save_timer.timeout.connect(self.board.save)
+        self.live_gain_timer = QTimer(self)     # and reach clips that are playing, at most ~12 times a second
+        self.live_gain_timer.setSingleShot(True)
+        self.live_gain_timer.setInterval(80)
+        self.live_gain_timer.timeout.connect(lambda: self.board.apply_live(self.s["board_volume"]))
         self.flush_timer = QTimer(self)         # retries live updates while a new chain registers
         self.flush_timer.timeout.connect(self._flush)
         # level meters run only while someone looks: the window, a levels subscriber or a recent query
@@ -244,6 +253,20 @@ class Controller(QObject):
         self._emit()
         return ok
 
+    def set_clip_gain(self, ref, gain, from_ui=False):
+        """Set one pad's volume (gain, 1.0 = as recorded). Next play uses it, clips already
+        playing follow within about 80 ms, board.json is written 400 ms after the last change."""
+        clip = self.board.find(ref)
+        if not clip:
+            return None
+        g = self.board.set_gain(clip, gain)
+        self.board_save_timer.start()
+        if self.board.reap():
+            self.live_gain_timer.start()
+        if not from_ui:
+            self.clip_gain_changed.emit(self.board.clips.index(clip), g)
+        return g
+
     def stop_all(self):
         self.board.stop_all()
         self._emit()
@@ -317,6 +340,8 @@ class Controller(QObject):
     def shutdown(self):
         if self.save_timer.isActive():
             self.save()
+        if self.board_save_timer.isActive():
+            self.board.save()
         self.meter.unwatch_all()
         self.board.stop_all()
         self.engine.stop()
@@ -412,7 +437,19 @@ class Controller(QObject):
             v = self.set_param(str(m.get("id", "")), m.get("value"), m.get("preset"))
             return {"ok": True, "cmd": cmd, "id": m.get("id"), "value": v}
         elif cmd == "clips":
-            return {"ok": True, "clips": [c["name"] for c in self.board.clips]}
+            return {"ok": True, "clips": [c["name"] for c in self.board.clips],
+                    "gains": [clamp_gain(c.get("gain", 1.0)) for c in self.board.clips]}
+        elif cmd == "clip-volume":
+            clip = self.board.find(m.get("clip", ""))
+            if not clip:
+                return {"ok": False, "error": f"no such clip {m.get('clip')!r}"}
+            v = m.get("volume")
+            if v is not None:
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    return {"ok": False, "error": "volume must be a number (percent, 100 = as recorded)"}
+                self.set_clip_gain(m["clip"], v / 100)
+            return {"ok": True, "cmd": cmd, "clip": clip["name"],
+                    "volume": round(clamp_gain(clip.get("gain", 1.0)) * 100, 1)}
         elif cmd == "mics":
             return {"ok": True, "mics": [{"name": n, "description": d} for n, d in audio.list_mics()]}
         elif cmd == "subscribe":

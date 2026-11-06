@@ -42,6 +42,20 @@ def make_samples() -> list:
     return out
 
 
+GAIN_MAX = 4.0   # same ceiling the .voxdeck import accepts
+
+
+def clamp_gain(value) -> float:
+    """Per-clip gain as a float in 0..GAIN_MAX (1.0 = unchanged); junk becomes 1.0."""
+    try:
+        g = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if g != g:
+        return 1.0
+    return round(max(0.0, min(GAIN_MAX, g)), 3)
+
+
 class Board:
     def __init__(self):
         self.file = config_dir() / "board.json"
@@ -74,16 +88,59 @@ class Board:
     def play(self, clip, volume=1.0, monitor=False, monitor_target=None):
         if not Path(clip["path"]).exists():
             return False
-        gain = clip.get("gain", 1.0)
-        vol = f"{max(0.0, min(1.0, volume * gain)):.3f}"
+        vol = f"{self.level(clip, volume):.3f}"
         targets = [MIX_SINK] + ([monitor_target or ""] if monitor else [])
         for t in targets:
             cmd = ["pw-play", "--volume", vol, "--media-role", "Game"]
             if t:
                 cmd += ["--target", t]
-            self.procs.append(subprocess.Popen(cmd + [clip["path"]], stdout=subprocess.DEVNULL,
-                                               stderr=subprocess.DEVNULL))
+            p = subprocess.Popen(cmd + [clip["path"]], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+            p.clip, p.level = clip, float(vol)
+            self.procs.append(p)
         return True
+
+    @staticmethod
+    def level(clip, volume=1.0) -> float:
+        """Stream volume pw-play gets for this clip: board volume x clip gain, capped at 1."""
+        return max(0.0, min(1.0, volume * clamp_gain(clip.get("gain", 1.0))))
+
+    def set_gain(self, clip, gain) -> float:
+        clip["gain"] = clamp_gain(gain)
+        return clip["gain"]
+
+    def apply_live(self, volume=1.0) -> int:
+        """Push the current level to clips that are playing right now (one `pw-dump`, then one
+        `pw-cli set-param` per changed stream). Returns how many streams were updated."""
+        todo = [p for p in self.procs if p.poll() is None and getattr(p, "clip", None) is not None
+                and abs(self.level(p.clip, volume) - p.level) > 5e-4]
+        if not todo:
+            return 0
+        try:
+            objs = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return 0
+        clients = {o["id"]: str(o["info"]["props"].get("application.process.id"))
+                   for o in objs if o.get("type", "").endswith("Client") and o.get("info")}
+        nodes = {}
+        for o in objs:
+            if o.get("type", "").endswith("Node") and o.get("info"):
+                pr = o["info"].get("props", {})
+                if pr.get("media.class") == "Stream/Output/Audio":
+                    nodes[clients.get(pr.get("client.id"))] = o["id"]
+        n = 0
+        for p in todo:
+            nid, lvl = nodes.get(str(p.pid)), self.level(p.clip, volume)
+            if nid is None:
+                continue
+            try:
+                subprocess.run(["pw-cli", "set-param", str(nid), "Props", f"{{ volume = {lvl:.4f} }}"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            p.level = lvl
+            n += 1
+        return n
 
     def reap(self) -> int:
         self.procs = [p for p in self.procs if p.poll() is None]

@@ -58,7 +58,7 @@ systemctl --user enable --now vox-deck.service
 2. In Discord or your game, choose **Voice Mix** as the input device.
 3. Click a voice preset. The big **Effects** button bypasses all effects. The two meters under the microphone picker show the peak level of your microphone (**Mic in**) and of what others hear (**Voice Mix**), so you can tell at a glance whether the mic is picked up and whether a preset is too loud or too quiet.
 4. Under **Tune**, the sliders adjust the selected preset while you talk: its key controls (pitch, reverb level, ring frequency, cut-offs and so on), an **Effect mix** (wet/dry) on presets where blending in the dry voice makes sense, and **Output gain** on every preset. Changes are kept per preset; **Reset** goes back to the preset's own values. **Save as preset...** keeps the current settings as a preset of your own: it appears after the built-ins (blue outline), and right-clicking it lets you rename or delete it. Built-in presets are read-only.
-5. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output. Tick **Hear my voice** to hear your own processed voice live (after the preset and your tuning), with its own volume slider; see "Hearing yourself" below.
+5. Click pads to play clips into the mix. Drop audio files on the window or press `+` to add them; right-click a pad to rename, recolour or remove it. The slider under each pad sets that pad's volume (0 to 200 %, 100 % = the clip as recorded; it is multiplied by **Board volume**, and a sound can never go above full scale). The change applies to the next play and also to a copy of that clip that is playing right now, within about a tenth of a second. It is saved to `board.json` as the clip's `gain` shortly after you let go, and travels in `.voxdeck` exports. wav, flac, ogg, opus and mp3 work (whatever libsndfile/pw-play decodes). Tick **Hear clips myself** to also play clips on your default output. Tick **Hear my voice** to hear your own processed voice live (after the preset and your tuning), with its own volume slider; see "Hearing yourself" below.
 
 Settings, clips and your own presets live in `~/.config/vox-deck/`.
 
@@ -129,6 +129,7 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"voice-monitor","on":true,"volume":0.7}` | hear your own processed voice: `on` true/false (or `"toggle":true`), `volume` 0 to 1; both optional, with neither it just returns the state. `status` and `subscribe` events carry `voice_monitor` and `voice_monitor_volume` |
 | `{"cmd":"mic","source":"<node name>"}` | choose the microphone |
 | `{"cmd":"stop"}` | stop all clips |
+| `{"cmd":"clip-volume","clip":"Chime","volume":60}` | set a pad's volume in percent (0 to 400; 100 = as recorded); without `volume` it just reports it. The pad slider follows |
 | `{"cmd":"status"}`, `presets`, `clips`, `mics` | queries (`status` also carries `levels`) |
 | `{"cmd":"params"}` / `{"cmd":"params","preset":"deep"}` | tunable controls with range, unit and current value |
 | `{"cmd":"param","id":"pitch","value":0.8}` | set a control live (current preset, or add `"preset"`); the reply has the value after clamping |
@@ -143,7 +144,7 @@ The app listens on `$XDG_RUNTIME_DIR/vox-deck.sock`. Protocol: one JSON object p
 | `{"cmd":"subscribe"}` | keep the connection open; status events are pushed as they change |
 | `{"cmd":"subscribe","levels":true}` | as above, plus `{"event":"levels","mic":-18.0,"out":-21.5}` about 10 times a second |
 
-CLI: `vox-deck play Chime`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck hear on --volume 60`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, `vox-deck export board.voxdeck`, `vox-deck import --dry-run board.voxdeck`, `vox-deck import board.voxdeck --presets skip --board replace`, and so on (`vox-deck --help`).
+CLI: `vox-deck play Chime`, `vox-deck clip-volume Chime 60`, `vox-deck preset deep`, `vox-deck toggle`, `vox-deck hear on --volume 60`, `vox-deck status`, `vox-deck levels`, `vox-deck subscribe [--levels]`, `vox-deck params`, `vox-deck param pitch 0.8`, `vox-deck param --reset`, `vox-deck save "My Voice"`, `vox-deck rename my-voice Gravel`, `vox-deck delete my-voice`, `vox-deck export board.voxdeck`, `vox-deck import --dry-run board.voxdeck`, `vox-deck import board.voxdeck --presets skip --board replace`, and so on (`vox-deck --help`).
 
 The meters are cheap: they use PulseAudio-protocol peak-detect streams, so pipewire-pulse computes the peaks and the app receives about 25 numbers a second per meter instead of audio. They only run while the window is visible, a client is subscribed to levels, or for 10 seconds after a `levels`/`status` query.
 

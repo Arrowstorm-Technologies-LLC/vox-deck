@@ -27,6 +27,9 @@ def main(argv=None):
     sub.add_parser("status", help="print status as JSON")
     sub.add_parser("presets", help="list presets")
     sub.add_parser("clips", help="list clips")
+    p = sub.add_parser("clip-volume", help="show or set a pad's volume in percent (100 = as recorded, up to 400)")
+    p.add_argument("clip")
+    p.add_argument("percent", nargs="?", type=float)
     sub.add_parser("mics", help="list microphones")
     p = sub.add_parser("params", help="list the tunable controls of a preset (default: current)")
     p.add_argument("preset", nargs="?")
@@ -68,6 +71,10 @@ def main(argv=None):
             msg["clip"] = a.clip
         elif a.cmd == "preset":
             msg["preset"] = a.preset
+        elif a.cmd == "clip-volume":
+            msg["clip"] = a.clip
+            if a.percent is not None:
+                msg["volume"] = a.percent
         elif a.cmd in ("toggle", "mute") and a.state:
             msg["on"] = a.state == "on"
         elif a.cmd == "mic":
@@ -107,7 +114,7 @@ def main(argv=None):
     except (OSError, KeyboardInterrupt) as e:
         print(f"vox-deck: app not running ({e})", file=sys.stderr)
         return 2
-    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "hear", "param", "save", "rename", "delete") else 1))
+    print(json.dumps(r, indent=None if a.cmd in ("play", "preset", "toggle", "mute", "stop", "mic", "hear", "param", "clip-volume", "save", "rename", "delete") else 1))
     return 0 if r.get("ok", True) else 1
 
 
